@@ -11,6 +11,23 @@ const appointments = [
 
 const nav = ['Resumen', 'Agenda', 'Reservas', 'Clientes', 'Servicios', 'Equipo'];
 
+const weekDays = [
+  { day: 'Lun', date: 24 }, { day: 'Mar', date: 25 }, { day: 'Mié', date: 26 },
+  { day: 'Jue', date: 27, today: true }, { day: 'Vie', date: 28 }, { day: 'Sáb', date: 29 },
+];
+
+const calendarBookings = [
+  { id: 1, day: 0, start: 9, span: 1.5, name: 'Camila Soto', service: 'Evaluación inicial', pro: 'Sofía', color: 'purple-event', paid: true },
+  { id: 2, day: 0, start: 13, span: 1, name: 'Valentina Mora', service: 'Consulta online', pro: 'Martín', color: 'mint-event', paid: true },
+  { id: 3, day: 1, start: 10.5, span: 1, name: 'Tomás Silva', service: 'Seguimiento', pro: 'Martín', color: 'coral-event', paid: false },
+  { id: 4, day: 2, start: 15, span: 1.5, name: 'Paula Torres', service: 'Evaluación inicial', pro: 'Sofía', color: 'purple-event', paid: true },
+  { id: 5, day: 3, start: 9, span: 1, name: 'Daniela Rojas', service: 'Consulta online', pro: 'Sofía', color: 'mint-event', paid: true },
+  { id: 6, day: 3, start: 12, span: 1, name: 'Ignacio Pérez', service: 'Seguimiento', pro: 'Martín', color: 'coral-event', paid: false },
+  { id: 7, day: 3, start: 15.5, span: 1, name: 'Martina León', service: 'Evaluación inicial', pro: 'Sofía', color: 'purple-event', paid: true },
+  { id: 8, day: 4, start: 11, span: 1, name: 'Javier Muñoz', service: 'Consulta online', pro: 'Martín', color: 'mint-event', paid: true },
+  { id: 9, day: 5, start: 10, span: 1.5, name: 'Antonia Vidal', service: 'Evaluación inicial', pro: 'Sofía', color: 'purple-event', paid: false },
+];
+
 export default function Home() {
   const [active, setActive] = useState('Resumen');
   const [notice, setNotice] = useState('');
@@ -29,7 +46,7 @@ export default function Home() {
         </a>
         <nav aria-label="Navegación principal">
           {nav.map((item, index) => (
-            <button key={item} className={active === item ? 'nav-item active' : 'nav-item'} onClick={() => { setActive(item); demo(`${item}: módulo listo para conectar`); }}>
+            <button key={item} className={active === item ? 'nav-item active' : 'nav-item'} onClick={() => { setActive(item); if (!['Resumen','Agenda'].includes(item)) demo(`${item}: módulo listo para conectar`); }}>
               <span className="nav-icon" aria-hidden="true">{['⌂','▦','◫','♙','◇','♚'][index]}</span>{item}
             </button>
           ))}
@@ -47,7 +64,7 @@ export default function Home() {
           <div className="top-actions"><button aria-label="Notificaciones">♢<em>3</em></button><button className="public-link" onClick={() => window.location.assign('/reservar')}>↗ Ver mi página</button></div>
         </header>
 
-        <div className="content">
+        {active === 'Agenda' ? <AgendaModule demo={demo} /> : <div className="content">
           <div className="welcome-row">
             <div><p className="eyebrow">{today}</p><h1>Buenos días, Francisco</h1><p>Tu negocio está en orden. Tienes 4 reservas para hoy.</p></div>
             <button className="primary" onClick={() => demo('Nueva reserva iniciada')}><span>＋</span> Nueva reserva</button>
@@ -82,9 +99,59 @@ export default function Home() {
               <div className="setup-card"><div className="setup-ring"><strong>75%</strong></div><div><strong>Completa tu cuenta</strong><small>Conecta un medio de pago para recibir abonos.</small><button onClick={() => demo('Configuración de pagos')}>Continuar configuración</button></div></div>
             </aside>
           </div>
-        </div>
+        </div>}
       </section>
       {notice && <div className="toast" role="status">✓ {notice}</div>}
     </main>
   );
+}
+
+function AgendaModule({ demo }: { demo: (message: string) => void }) {
+  const [view, setView] = useState<'Semana' | 'Día'>('Semana');
+  const [professional, setProfessional] = useState('Todos');
+  const [weekOffset, setWeekOffset] = useState(0);
+  const [selected, setSelected] = useState<(typeof calendarBookings)[number] | null>(null);
+  const visible = calendarBookings.filter(b => professional === 'Todos' || b.pro === professional);
+  const hours = Array.from({ length: 11 }, (_, i) => i + 8);
+  const label = weekOffset === 0 ? '24–29 agosto 2026' : weekOffset > 0 ? '31 agosto–5 septiembre 2026' : '17–22 agosto 2026';
+
+  return <div className="agenda-content">
+    <div className="agenda-titlebar">
+      <div><p className="eyebrow">GESTIÓN DE DISPONIBILIDAD</p><h1>Agenda</h1><p>Organiza las reservas y horarios de tu equipo.</p></div>
+      <div className="agenda-actions"><button className="secondary-action" onClick={() => demo('Selecciona un espacio libre para bloquearlo')}>⊘ Bloquear horario</button><button className="primary" onClick={() => demo('Nueva reserva iniciada')}><span>＋</span> Nueva reserva</button></div>
+    </div>
+
+    <section className="agenda-toolbar">
+      <div className="date-nav"><button onClick={() => setWeekOffset(0)}>Hoy</button><button aria-label="Semana anterior" onClick={() => setWeekOffset(v => v - 1)}>‹</button><button aria-label="Semana siguiente" onClick={() => setWeekOffset(v => v + 1)}>›</button><strong>{label}</strong></div>
+      <div className="agenda-filters"><label>Profesional <select value={professional} onChange={e => setProfessional(e.target.value)}><option>Todos</option><option>Sofía</option><option>Martín</option></select></label><div className="view-switch"><button className={view === 'Semana' ? 'active' : ''} onClick={() => setView('Semana')}>Semana</button><button className={view === 'Día' ? 'active' : ''} onClick={() => setView('Día')}>Día</button></div></div>
+    </section>
+
+    <div className="agenda-layout">
+      <section className="calendar-card">
+        <div className="calendar-scroll">
+          <div className={view === 'Día' ? 'calendar-grid day-view' : 'calendar-grid'}>
+            <div className="corner-cell" />
+            {(view === 'Día' ? weekDays.filter(d => d.today) : weekDays).map(d => <div className={d.today ? 'day-head today' : 'day-head'} key={d.day}><span>{d.day}</span><strong>{d.date}</strong>{d.today && <em>Hoy</em>}</div>)}
+            <div className="time-column">{hours.map(h => <time key={h}>{String(h).padStart(2,'0')}:00</time>)}</div>
+            <div className="calendar-body" style={{ '--days': view === 'Día' ? 1 : 6 } as React.CSSProperties}>
+              {hours.map(h => <div className="hour-line" style={{ top: `${(h - 8) * 72}px` }} key={h} />)}
+              {Array.from({ length: view === 'Día' ? 1 : 6 }, (_, i) => <div className="day-line" style={{ left: `${(i * 100) / (view === 'Día' ? 1 : 6)}%` }} key={i} />)}
+              {visible.filter(b => view === 'Semana' || b.day === 3).map(b => {
+                const dayIndex = view === 'Día' ? 0 : b.day;
+                return <button key={b.id} className={`calendar-event ${b.color}`} style={{ left: `calc(${dayIndex * (100 / (view === 'Día' ? 1 : 6))}% + 5px)`, width: `calc(${100 / (view === 'Día' ? 1 : 6)}% - 10px)`, top: `${(b.start - 8) * 72 + 5}px`, height: `${b.span * 72 - 8}px` }} onClick={() => setSelected(b)}><strong>{b.name}</strong><span>{b.service}</span><small>{String(Math.floor(b.start)).padStart(2,'0')}:{b.start % 1 ? '30' : '00'} · {b.pro}</small></button>;
+              })}
+              <div className="now-line" style={{ top: `${(11.25 - 8) * 72}px` }}><span>11:15</span></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <aside className="agenda-side">
+        <section className="day-summary"><p className="eyebrow">JUEVES 27</p><h2>Resumen del día</h2><div><span><b>3</b><small>Reservas</small></span><span><b>2h 45m</b><small>Ocupación</small></span><span><b>$88.000</b><small>Ingresos</small></span></div></section>
+        <section className="team-legend"><h3>Profesionales</h3><button className={professional === 'Todos' ? 'active' : ''} onClick={() => setProfessional('Todos')}><i className="all-dot"/><span><strong>Todo el equipo</strong><small>9 reservas</small></span></button><button className={professional === 'Sofía' ? 'active' : ''} onClick={() => setProfessional('Sofía')}><i className="sofia-dot"/><span><strong>Sofía Martínez</strong><small>5 reservas</small></span></button><button className={professional === 'Martín' ? 'active' : ''} onClick={() => setProfessional('Martín')}><i className="martin-dot"/><span><strong>Martín Reyes</strong><small>4 reservas</small></span></button></section>
+      </aside>
+    </div>
+
+    {selected && <div className="modal-backdrop" onClick={() => setSelected(null)}><article className="booking-detail" onClick={e => e.stopPropagation()}><button className="close-modal" onClick={() => setSelected(null)}>×</button><span className={`detail-status ${selected.paid ? 'paid' : 'pending'}`}>{selected.paid ? 'Pago confirmado' : 'Pago pendiente'}</span><h2>{selected.name}</h2><p>{selected.service}</p><dl><div><dt>Fecha y hora</dt><dd>Jueves 27 de agosto · {String(Math.floor(selected.start)).padStart(2,'0')}:{selected.start % 1 ? '30' : '00'}</dd></div><div><dt>Profesional</dt><dd>{selected.pro}</dd></div><div><dt>Duración</dt><dd>{selected.span * 60} minutos</dd></div></dl><div className="detail-actions"><button onClick={() => demo('Recordatorio enviado')}>Enviar recordatorio</button><button onClick={() => demo('Edición de reserva')}>Editar reserva</button></div></article></div>}
+  </div>;
 }
