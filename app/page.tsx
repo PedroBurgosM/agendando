@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useState } from 'react';
 
 const appointments = [
   { time: '09:00', name: 'Camila Soto', service: 'Evaluación inicial', pro: 'Sofía', color: '#7559f2' },
@@ -111,14 +111,51 @@ function AgendaModule({ demo }: { demo: (message: string) => void }) {
   const [professional, setProfessional] = useState('Todos');
   const [weekOffset, setWeekOffset] = useState(0);
   const [selected, setSelected] = useState<(typeof calendarBookings)[number] | null>(null);
-  const visible = calendarBookings.filter(b => professional === 'Todos' || b.pro === professional);
+  const [showNew, setShowNew] = useState(false);
+  const [savedBookings, setSavedBookings] = useState<(typeof calendarBookings)[number][]>([]);
+  const [loading, setLoading] = useState(true);
+  const [formError, setFormError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const visible = [...calendarBookings, ...savedBookings].filter(b => professional === 'Todos' || b.pro === professional);
   const hours = Array.from({ length: 11 }, (_, i) => i + 8);
   const label = weekOffset === 0 ? '24–29 agosto 2026' : weekOffset > 0 ? '31 agosto–5 septiembre 2026' : '17–22 agosto 2026';
+
+  async function loadBookings() {
+    try {
+      const response = await fetch('/api/bookings', { cache: 'no-store' });
+      if (!response.ok) throw new Error('No fue posible cargar las reservas.');
+      const data = await response.json() as { bookings: Array<{ id:number; starts_at:number; ends_at:number; customer_name:string; service_name:string; professional_name:string; payment_status:string }> };
+      const mapped = data.bookings.map(b => {
+        const start = new Date(b.starts_at * 1000);
+        const chile = new Date(start.toLocaleString('en-US', { timeZone: 'America/Santiago' }));
+        const day = (chile.getDay() + 6) % 7;
+        const hour = chile.getHours() + chile.getMinutes() / 60;
+        return { id: 10000 + b.id, day, start: hour, span: (b.ends_at - b.starts_at) / 3600, name: b.customer_name, service: b.service_name.replace('Sesión de seguimiento','Seguimiento'), pro: b.professional_name.replace(' Martínez','').replace(' Reyes',''), color: b.service_name === 'Evaluación inicial' ? 'purple-event' : b.service_name === 'Consulta online' ? 'mint-event' : 'coral-event', paid: b.payment_status === 'paid' };
+      }).filter(b => b.day >= 0 && b.day <= 5);
+      setSavedBookings(mapped);
+    } catch (error) { demo(error instanceof Error ? error.message : 'No fue posible cargar las reservas.'); }
+    finally { setLoading(false); }
+  }
+
+  useEffect(() => { void loadBookings(); }, []);
+
+  async function createBooking(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault(); setFormError(''); setSaving(true);
+    const form = new FormData(event.currentTarget);
+    const payload = Object.fromEntries(form.entries());
+    try {
+      const response = await fetch('/api/bookings', { method:'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify(payload) });
+      const result = await response.json() as { error?:string; message?:string };
+      if (!response.ok) throw new Error(result.error ?? 'No se pudo crear la cita.');
+      await loadBookings(); setShowNew(false); demo(result.message ?? 'Cita agendada correctamente');
+    } catch (error) { setFormError(error instanceof Error ? error.message : 'No se pudo crear la cita.'); }
+    finally { setSaving(false); }
+  }
 
   return <div className="agenda-content">
     <div className="agenda-titlebar">
       <div><p className="eyebrow">GESTIÓN DE DISPONIBILIDAD</p><h1>Agenda</h1><p>Organiza las reservas y horarios de tu equipo.</p></div>
-      <div className="agenda-actions"><button className="secondary-action" onClick={() => demo('Selecciona un espacio libre para bloquearlo')}>⊘ Bloquear horario</button><button className="primary" onClick={() => demo('Nueva reserva iniciada')}><span>＋</span> Nueva reserva</button></div>
+      <div className="agenda-actions"><button className="secondary-action" onClick={() => demo('Selecciona un espacio libre para bloquearlo')}>⊘ Bloquear horario</button><button className="primary" onClick={() => setShowNew(true)}><span>＋</span> Nueva reserva</button></div>
     </div>
 
     <section className="agenda-toolbar">
@@ -140,6 +177,7 @@ function AgendaModule({ demo }: { demo: (message: string) => void }) {
                 const dayIndex = view === 'Día' ? 0 : b.day;
                 return <button key={b.id} className={`calendar-event ${b.color}`} style={{ left: `calc(${dayIndex * (100 / (view === 'Día' ? 1 : 6))}% + 5px)`, width: `calc(${100 / (view === 'Día' ? 1 : 6)}% - 10px)`, top: `${(b.start - 8) * 72 + 5}px`, height: `${b.span * 72 - 8}px` }} onClick={() => setSelected(b)}><strong>{b.name}</strong><span>{b.service}</span><small>{String(Math.floor(b.start)).padStart(2,'0')}:{b.start % 1 ? '30' : '00'} · {b.pro}</small></button>;
               })}
+              {loading && <div className="calendar-loading">Cargando reservas…</div>}
               <div className="now-line" style={{ top: `${(11.25 - 8) * 72}px` }}><span>11:15</span></div>
             </div>
           </div>
@@ -153,5 +191,6 @@ function AgendaModule({ demo }: { demo: (message: string) => void }) {
     </div>
 
     {selected && <div className="modal-backdrop" onClick={() => setSelected(null)}><article className="booking-detail" onClick={e => e.stopPropagation()}><button className="close-modal" onClick={() => setSelected(null)}>×</button><span className={`detail-status ${selected.paid ? 'paid' : 'pending'}`}>{selected.paid ? 'Pago confirmado' : 'Pago pendiente'}</span><h2>{selected.name}</h2><p>{selected.service}</p><dl><div><dt>Fecha y hora</dt><dd>Jueves 27 de agosto · {String(Math.floor(selected.start)).padStart(2,'0')}:{selected.start % 1 ? '30' : '00'}</dd></div><div><dt>Profesional</dt><dd>{selected.pro}</dd></div><div><dt>Duración</dt><dd>{selected.span * 60} minutos</dd></div></dl><div className="detail-actions"><button onClick={() => demo('Recordatorio enviado')}>Enviar recordatorio</button><button onClick={() => demo('Edición de reserva')}>Editar reserva</button></div></article></div>}
+    {showNew && <div className="modal-backdrop"><form className="new-booking-modal" onSubmit={createBooking}><button type="button" className="close-modal" onClick={() => setShowNew(false)}>×</button><p className="eyebrow">NUEVA RESERVA</p><h2>Agendar una cita</h2><p>La reserva quedará guardada en la agenda del negocio.</p><div className="form-grid"><label className="full">Nombre del cliente<input name="customerName" required placeholder="Ej: Carolina González" /></label><label>Correo electrónico<input name="customerEmail" type="email" required placeholder="cliente@correo.cl" /></label><label>Teléfono<input name="customerPhone" type="tel" placeholder="+56 9 1234 5678" /></label><label>Servicio<select name="service" required defaultValue="Evaluación inicial"><option>Evaluación inicial</option><option>Sesión de seguimiento</option><option>Consulta online</option></select></label><label>Profesional<select name="professional" required defaultValue="Sofía Martínez"><option>Sofía Martínez</option><option>Martín Reyes</option></select></label><label>Fecha<input name="date" type="date" min="2026-08-22" defaultValue="2026-08-27" required /></label><label>Hora<input name="time" type="time" min="08:00" max="18:00" step="900" defaultValue="14:00" required /></label><label className="full">Notas<textarea name="notes" rows={3} placeholder="Información útil para la atención (opcional)" /></label></div>{formError && <div className="form-error" role="alert">{formError}</div>}<div className="modal-footer"><button type="button" onClick={() => setShowNew(false)}>Cancelar</button><button type="submit" disabled={saving}>{saving ? 'Guardando…' : 'Confirmar cita'}</button></div></form></div>}
   </div>;
 }
