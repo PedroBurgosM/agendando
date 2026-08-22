@@ -3,7 +3,8 @@ import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqli
 export const businesses = sqliteTable('businesses', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   ownerId: text('owner_id').notNull(), name: text('name').notNull(), slug: text('slug').notNull().unique(),
-  timezone: text('timezone').notNull().default('America/Santiago'), createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
+  email: text('email'), phone: text('phone'), address: text('address'), description: text('description'),
+  timezone: text('timezone').notNull().default('America/Santiago'), currency: text('currency').notNull().default('CLP'), cancellationHours: integer('cancellation_hours').notNull().default(24), bookingWindowDays: integer('booking_window_days').notNull().default(60), createdAt: integer('created_at', { mode: 'timestamp' }).notNull(),
 }, (table) => [index('idx_businesses_owner_id').on(table.ownerId)]);
 export const services = sqliteTable('services', {
   id: integer('id').primaryKey({ autoIncrement: true }), businessId: integer('business_id').notNull().references(() => businesses.id),
