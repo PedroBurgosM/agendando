@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { type CSSProperties, type FormEvent, useEffect, useMemo, useState } from 'react';
 
 const appointments = [
   { time: '09:00', name: 'Camila Soto', service: 'Evaluación inicial', pro: 'Sofía', color: '#7559f2' },
@@ -10,23 +10,6 @@ const appointments = [
 ];
 
 const nav = ['Resumen', 'Agenda', 'Reservas', 'Clientes', 'Servicios', 'Equipo'];
-
-const weekDays = [
-  { day: 'Lun', date: 24 }, { day: 'Mar', date: 25 }, { day: 'Mié', date: 26 },
-  { day: 'Jue', date: 27, today: true }, { day: 'Vie', date: 28 }, { day: 'Sáb', date: 29 },
-];
-
-const calendarBookings = [
-  { id: 1, day: 0, start: 9, span: 1.5, name: 'Camila Soto', service: 'Evaluación inicial', pro: 'Sofía', color: 'purple-event', paid: true },
-  { id: 2, day: 0, start: 13, span: 1, name: 'Valentina Mora', service: 'Consulta online', pro: 'Martín', color: 'mint-event', paid: true },
-  { id: 3, day: 1, start: 10.5, span: 1, name: 'Tomás Silva', service: 'Seguimiento', pro: 'Martín', color: 'coral-event', paid: false },
-  { id: 4, day: 2, start: 15, span: 1.5, name: 'Paula Torres', service: 'Evaluación inicial', pro: 'Sofía', color: 'purple-event', paid: true },
-  { id: 5, day: 3, start: 9, span: 1, name: 'Daniela Rojas', service: 'Consulta online', pro: 'Sofía', color: 'mint-event', paid: true },
-  { id: 6, day: 3, start: 12, span: 1, name: 'Ignacio Pérez', service: 'Seguimiento', pro: 'Martín', color: 'coral-event', paid: false },
-  { id: 7, day: 3, start: 15.5, span: 1, name: 'Martina León', service: 'Evaluación inicial', pro: 'Sofía', color: 'purple-event', paid: true },
-  { id: 8, day: 4, start: 11, span: 1, name: 'Javier Muñoz', service: 'Consulta online', pro: 'Martín', color: 'mint-event', paid: true },
-  { id: 9, day: 5, start: 10, span: 1.5, name: 'Antonia Vidal', service: 'Evaluación inicial', pro: 'Sofía', color: 'purple-event', paid: false },
-];
 
 export default function Home() {
   const [active, setActive] = useState('Resumen');
@@ -106,35 +89,46 @@ export default function Home() {
   );
 }
 
+type AgendaBooking = { id:number; service_id:number; professional_id:number; starts_at:number; ends_at:number; status:string; payment_status:string; amount_clp:number; customer_name:string; service_name:string; professional_name:string };
+type CalendarBooking = AgendaBooking & { day:number; start:number; span:number; color:string; dateKey:string };
+
+const chileDateParts = (value:Date) => Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone:'America/Santiago',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).formatToParts(value).filter(p=>p.type!=='literal').map(p=>[p.type,p.value]));
+const localDateKey = (date:Date) => `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
+const bookingDateKey = (seconds:number) => { const p=chileDateParts(new Date(seconds*1000)); return `${p.year}-${p.month}-${p.day}`; };
+const startOfWeek = (date:Date) => { const result=new Date(date); result.setHours(12,0,0,0); result.setDate(result.getDate()-((result.getDay()+6)%7)); return result; };
+const addDays = (date:Date,days:number) => { const result=new Date(date); result.setDate(result.getDate()+days); return result; };
+
 function AgendaModule({ demo }: { demo: (message: string) => void }) {
   const [view, setView] = useState<'Semana' | 'Día'>('Semana');
   const [professional, setProfessional] = useState('Todos');
-  const [weekOffset, setWeekOffset] = useState(0);
-  const [selected, setSelected] = useState<(typeof calendarBookings)[number] | null>(null);
+  const [focusDate, setFocusDate] = useState(() => new Date());
+  const [selected, setSelected] = useState<CalendarBooking | null>(null);
   const [showNew, setShowNew] = useState(false);
-  const [savedBookings, setSavedBookings] = useState<(typeof calendarBookings)[number][]>([]);
+  const [savedBookings, setSavedBookings] = useState<AgendaBooking[]>([]);
   const [loading, setLoading] = useState(true);
   const [formError, setFormError] = useState('');
   const [saving, setSaving] = useState(false);
   const [agendaServices,setAgendaServices] = useState<Service[]>([]);
   const [agendaTeam,setAgendaTeam] = useState<TeamMember[]>([]);
-  const visible = [...calendarBookings, ...savedBookings].filter(b => professional === 'Todos' || b.pro === professional);
   const hours = Array.from({ length: 11 }, (_, i) => i + 8);
-  const label = weekOffset === 0 ? '24–29 agosto 2026' : weekOffset > 0 ? '31 agosto–5 septiembre 2026' : '17–22 agosto 2026';
+  const weekStart = startOfWeek(focusDate);
+  const days = view==='Semana' ? Array.from({length:7},(_,i)=>addDays(weekStart,i)) : [focusDate];
+  const todayKey=localDateKey(new Date());
+  const label=view==='Día' ? new Intl.DateTimeFormat('es-CL',{weekday:'long',day:'numeric',month:'long',year:'numeric'}).format(focusDate) : `${new Intl.DateTimeFormat('es-CL',{day:'numeric',month:'short'}).format(days[0])} – ${new Intl.DateTimeFormat('es-CL',{day:'numeric',month:'short',year:'numeric'}).format(days[6])}`;
+  const colorClasses=['purple-event','mint-event','coral-event'];
+  const visible:CalendarBooking[]=savedBookings.map(b=>{const p=chileDateParts(new Date(b.starts_at*1000));const dateKey=bookingDateKey(b.starts_at);return {...b,dateKey,day:days.findIndex(d=>localDateKey(d)===dateKey),start:Number(p.hour)+Number(p.minute)/60,span:(b.ends_at-b.starts_at)/3600,color:colorClasses[Math.abs(Number(b.professional_id))%colorClasses.length]};}).filter(b=>b.day>=0&&(professional==='Todos'||String(b.professional_id)===professional));
+  const summaryDate=view==='Día'?focusDate:(days.find(d=>localDateKey(d)===todayKey)??days[0]);
+  const summaryKey=localDateKey(summaryDate);
+  const summaryBookings=savedBookings.filter(b=>bookingDateKey(b.starts_at)===summaryKey&&(professional==='Todos'||String(b.professional_id)===professional));
+  const occupiedMinutes=summaryBookings.reduce((total,b)=>total+Math.round((b.ends_at-b.starts_at)/60),0);
+  const summaryIncome=summaryBookings.filter(b=>b.payment_status==='paid').reduce((total,b)=>total+Number(b.amount_clp),0);
 
   async function loadBookings() {
     try {
       const response = await fetch('/api/bookings', { cache: 'no-store' });
       if (!response.ok) throw new Error('No fue posible cargar las reservas.');
-      const data = await response.json() as { bookings: Array<{ id:number; starts_at:number; ends_at:number; customer_name:string; service_name:string; professional_name:string; payment_status:string }> };
-      const mapped = data.bookings.map(b => {
-        const start = new Date(b.starts_at * 1000);
-        const chile = new Date(start.toLocaleString('en-US', { timeZone: 'America/Santiago' }));
-        const day = (chile.getDay() + 6) % 7;
-        const hour = chile.getHours() + chile.getMinutes() / 60;
-        return { id: 10000 + b.id, day, start: hour, span: (b.ends_at - b.starts_at) / 3600, name: b.customer_name, service: b.service_name.replace('Sesión de seguimiento','Seguimiento'), pro: b.professional_name.replace(' Martínez','').replace(' Reyes',''), color: b.service_name === 'Evaluación inicial' ? 'purple-event' : b.service_name === 'Consulta online' ? 'mint-event' : 'coral-event', paid: b.payment_status === 'paid' };
-      }).filter(b => b.day >= 0 && b.day <= 5);
-      setSavedBookings(mapped);
+      const data = await response.json() as { bookings: AgendaBooking[] };
+      setSavedBookings(data.bookings);
     } catch (error) { demo(error instanceof Error ? error.message : 'No fue posible cargar las reservas.'); }
     finally { setLoading(false); }
   }
@@ -151,7 +145,7 @@ function AgendaModule({ demo }: { demo: (message: string) => void }) {
       const response = await fetch('/api/bookings', { method:'POST', headers:{ 'Content-Type':'application/json' }, body:JSON.stringify(payload) });
       const result = await response.json() as { error?:string; message?:string };
       if (!response.ok) throw new Error(result.error ?? 'No se pudo crear la cita.');
-      await loadBookings(); setShowNew(false); demo(result.message ?? 'Cita agendada correctamente');
+      await loadBookings(); const date=String(payload.date); if(/^\d{4}-\d{2}-\d{2}$/.test(date))setFocusDate(new Date(`${date}T12:00:00`)); setShowNew(false); demo(result.message ?? 'Cita agendada correctamente');
     } catch (error) { setFormError(error instanceof Error ? error.message : 'No se pudo crear la cita.'); }
     finally { setSaving(false); }
   }
@@ -163,39 +157,37 @@ function AgendaModule({ demo }: { demo: (message: string) => void }) {
     </div>
 
     <section className="agenda-toolbar">
-      <div className="date-nav"><button onClick={() => setWeekOffset(0)}>Hoy</button><button aria-label="Semana anterior" onClick={() => setWeekOffset(v => v - 1)}>‹</button><button aria-label="Semana siguiente" onClick={() => setWeekOffset(v => v + 1)}>›</button><strong>{label}</strong></div>
-      <div className="agenda-filters"><label>Profesional <select value={professional} onChange={e => setProfessional(e.target.value)}><option>Todos</option><option>Sofía</option><option>Martín</option></select></label><div className="view-switch"><button className={view === 'Semana' ? 'active' : ''} onClick={() => setView('Semana')}>Semana</button><button className={view === 'Día' ? 'active' : ''} onClick={() => setView('Día')}>Día</button></div></div>
+      <div className="date-nav"><button onClick={() => setFocusDate(new Date())}>Hoy</button><button aria-label={view==='Semana'?'Semana anterior':'Día anterior'} onClick={() => setFocusDate(d => addDays(d,view==='Semana'?-7:-1))}>‹</button><button aria-label={view==='Semana'?'Semana siguiente':'Día siguiente'} onClick={() => setFocusDate(d => addDays(d,view==='Semana'?7:1))}>›</button><strong>{label}</strong></div>
+      <div className="agenda-filters"><label>Profesional <select value={professional} onChange={e => setProfessional(e.target.value)}><option value="Todos">Todos</option>{agendaTeam.map(m=><option value={m.id} key={m.id}>{m.name}</option>)}</select></label><div className="view-switch"><button className={view === 'Semana' ? 'active' : ''} onClick={() => setView('Semana')}>Semana</button><button className={view === 'Día' ? 'active' : ''} onClick={() => setView('Día')}>Día</button></div></div>
     </section>
 
     <div className="agenda-layout">
       <section className="calendar-card">
         <div className="calendar-scroll">
-          <div className={view === 'Día' ? 'calendar-grid day-view' : 'calendar-grid'}>
+          <div className={view === 'Día' ? 'calendar-grid day-view' : 'calendar-grid'} style={{gridTemplateColumns:`62px repeat(${days.length}, minmax(105px, 1fr))`} as CSSProperties}>
             <div className="corner-cell" />
-            {(view === 'Día' ? weekDays.filter(d => d.today) : weekDays).map(d => <div className={d.today ? 'day-head today' : 'day-head'} key={d.day}><span>{d.day}</span><strong>{d.date}</strong>{d.today && <em>Hoy</em>}</div>)}
+            {days.map(d => {const isToday=localDateKey(d)===todayKey;return <div className={isToday?'day-head today':'day-head'} key={localDateKey(d)}><span>{new Intl.DateTimeFormat('es-CL',{weekday:'short'}).format(d)}</span><strong>{d.getDate()}</strong>{isToday&&<em>Hoy</em>}</div>;})}
             <div className="time-column">{hours.map(h => <time key={h}>{String(h).padStart(2,'0')}:00</time>)}</div>
-            <div className="calendar-body" style={{ '--days': view === 'Día' ? 1 : 6 } as React.CSSProperties}>
+            <div className="calendar-body">
               {hours.map(h => <div className="hour-line" style={{ top: `${(h - 8) * 72}px` }} key={h} />)}
-              {Array.from({ length: view === 'Día' ? 1 : 6 }, (_, i) => <div className="day-line" style={{ left: `${(i * 100) / (view === 'Día' ? 1 : 6)}%` }} key={i} />)}
-              {visible.filter(b => view === 'Semana' || b.day === 3).map(b => {
-                const dayIndex = view === 'Día' ? 0 : b.day;
-                return <button key={b.id} className={`calendar-event ${b.color}`} style={{ left: `calc(${dayIndex * (100 / (view === 'Día' ? 1 : 6))}% + 5px)`, width: `calc(${100 / (view === 'Día' ? 1 : 6)}% - 10px)`, top: `${(b.start - 8) * 72 + 5}px`, height: `${b.span * 72 - 8}px` }} onClick={() => setSelected(b)}><strong>{b.name}</strong><span>{b.service}</span><small>{String(Math.floor(b.start)).padStart(2,'0')}:{b.start % 1 ? '30' : '00'} · {b.pro}</small></button>;
+              {days.map((_,i) => <div className="day-line" style={{ left: `${(i * 100) / days.length}%` }} key={i} />)}
+              {visible.map(b => {
+                return <button key={b.id} className={`calendar-event ${b.color}`} style={{ left: `calc(${b.day * (100 / days.length)}% + 5px)`, width: `calc(${100 / days.length}% - 10px)`, top: `${Math.max(0,(b.start - 8) * 72 + 5)}px`, height: `${Math.max(34,b.span * 72 - 8)}px` }} onClick={() => setSelected(b)}><strong>{b.customer_name}</strong><span>{b.service_name}</span><small>{String(Math.floor(b.start)).padStart(2,'0')}:{String(Math.round((b.start%1)*60)).padStart(2,'0')} · {b.professional_name}</small></button>;
               })}
               {loading && <div className="calendar-loading">Cargando reservas…</div>}
-              <div className="now-line" style={{ top: `${(11.25 - 8) * 72}px` }}><span>11:15</span></div>
             </div>
           </div>
         </div>
       </section>
 
       <aside className="agenda-side">
-        <section className="day-summary"><p className="eyebrow">JUEVES 27</p><h2>Resumen del día</h2><div><span><b>3</b><small>Reservas</small></span><span><b>2h 45m</b><small>Ocupación</small></span><span><b>$88.000</b><small>Ingresos</small></span></div></section>
-        <section className="team-legend"><h3>Profesionales</h3><button className={professional === 'Todos' ? 'active' : ''} onClick={() => setProfessional('Todos')}><i className="all-dot"/><span><strong>Todo el equipo</strong><small>9 reservas</small></span></button><button className={professional === 'Sofía' ? 'active' : ''} onClick={() => setProfessional('Sofía')}><i className="sofia-dot"/><span><strong>Sofía Martínez</strong><small>5 reservas</small></span></button><button className={professional === 'Martín' ? 'active' : ''} onClick={() => setProfessional('Martín')}><i className="martin-dot"/><span><strong>Martín Reyes</strong><small>4 reservas</small></span></button></section>
+        <section className="day-summary"><p className="eyebrow">{new Intl.DateTimeFormat('es-CL',{weekday:'long',day:'numeric'}).format(summaryDate)}</p><h2>Resumen del día</h2><div><span><b>{summaryBookings.length}</b><small>Reservas</small></span><span><b>{Math.floor(occupiedMinutes/60)}h {occupiedMinutes%60}m</b><small>Ocupación</small></span><span><b>${summaryIncome.toLocaleString('es-CL')}</b><small>Ingresos pagados</small></span></div></section>
+        <section className="team-legend"><h3>Profesionales</h3><button className={professional === 'Todos' ? 'active' : ''} onClick={() => setProfessional('Todos')}><i className="all-dot"/><span><strong>Todo el equipo</strong><small>{savedBookings.filter(b=>days.some(d=>localDateKey(d)===bookingDateKey(b.starts_at))).length} reservas visibles</small></span></button>{agendaTeam.map((m,index)=><button className={professional===String(m.id)?'active':''} onClick={()=>setProfessional(String(m.id))} key={m.id}><i style={{background:m.color||['#7659e8','#31aa86','#ed8060'][index%3]}}/><span><strong>{m.name}</strong><small>{savedBookings.filter(b=>b.professional_id===m.id&&days.some(d=>localDateKey(d)===bookingDateKey(b.starts_at))).length} reservas</small></span></button>)}</section>
       </aside>
     </div>
 
-    {selected && <div className="modal-backdrop" onClick={() => setSelected(null)}><article className="booking-detail" onClick={e => e.stopPropagation()}><button className="close-modal" onClick={() => setSelected(null)}>×</button><span className={`detail-status ${selected.paid ? 'paid' : 'pending'}`}>{selected.paid ? 'Pago confirmado' : 'Pago pendiente'}</span><h2>{selected.name}</h2><p>{selected.service}</p><dl><div><dt>Fecha y hora</dt><dd>Jueves 27 de agosto · {String(Math.floor(selected.start)).padStart(2,'0')}:{selected.start % 1 ? '30' : '00'}</dd></div><div><dt>Profesional</dt><dd>{selected.pro}</dd></div><div><dt>Duración</dt><dd>{selected.span * 60} minutos</dd></div></dl><div className="detail-actions"><button onClick={() => demo('Recordatorio enviado')}>Enviar recordatorio</button><button onClick={() => demo('Edición de reserva')}>Editar reserva</button></div></article></div>}
-    {showNew && <div className="modal-backdrop"><form className="new-booking-modal" onSubmit={createBooking}><button type="button" className="close-modal" onClick={() => setShowNew(false)}>×</button><p className="eyebrow">NUEVA RESERVA</p><h2>Agendar una cita</h2><p>La reserva quedará guardada en la agenda del negocio.</p><div className="form-grid"><label className="full">Nombre del cliente<input name="customerName" required placeholder="Ej: Carolina González" /></label><label>Correo electrónico<input name="customerEmail" type="email" required placeholder="cliente@correo.cl" /></label><label>Teléfono<input name="customerPhone" type="tel" placeholder="+56 9 1234 5678" /></label><label>Servicio<select name="serviceId" required defaultValue=""><option value="" disabled>Seleccionar servicio</option>{agendaServices.map(s=><option value={s.id} key={s.id}>{s.name} · ${Number(s.price_clp).toLocaleString('es-CL')}</option>)}</select></label><label>Profesional<select name="professionalId" required defaultValue=""><option value="" disabled>Seleccionar profesional</option>{agendaTeam.map(m=><option value={m.id} key={m.id}>{m.name} · {m.role}</option>)}</select></label><label>Fecha<input name="date" type="date" min="2026-08-22" defaultValue="2026-08-27" required /></label><label>Hora<input name="time" type="time" min="08:00" max="18:00" step="900" defaultValue="14:00" required /></label><label className="full">Notas<textarea name="notes" rows={3} placeholder="Información útil para la atención (opcional)" /></label></div>{formError && <div className="form-error" role="alert">{formError}</div>}<div className="modal-footer"><button type="button" onClick={() => setShowNew(false)}>Cancelar</button><button type="submit" disabled={saving||agendaServices.length===0||agendaTeam.length===0}>{saving ? 'Guardando…' : 'Confirmar cita'}</button></div></form></div>}
+    {selected && <div className="modal-backdrop" onClick={() => setSelected(null)}><article className="booking-detail" onClick={e => e.stopPropagation()}><button className="close-modal" onClick={() => setSelected(null)}>×</button><span className={`detail-status ${selected.payment_status==='paid'?'paid':'pending'}`}>{selected.payment_status==='paid'?'Pago confirmado':'Pago pendiente'}</span><h2>{selected.customer_name}</h2><p>{selected.service_name}</p><dl><div><dt>Fecha y hora</dt><dd>{new Intl.DateTimeFormat('es-CL',{timeZone:'America/Santiago',weekday:'long',day:'numeric',month:'long',hour:'2-digit',minute:'2-digit'}).format(new Date(selected.starts_at*1000))}</dd></div><div><dt>Profesional</dt><dd>{selected.professional_name}</dd></div><div><dt>Duración</dt><dd>{Math.round(selected.span*60)} minutos</dd></div></dl><div className="detail-actions"><button onClick={() => demo('Recordatorio enviado')}>Enviar recordatorio</button><button onClick={() => demo('Edición de reserva')}>Editar reserva</button></div></article></div>}
+    {showNew && <div className="modal-backdrop"><form className="new-booking-modal" onSubmit={createBooking}><button type="button" className="close-modal" onClick={() => setShowNew(false)}>×</button><p className="eyebrow">NUEVA RESERVA</p><h2>Agendar una cita</h2><p>La reserva quedará guardada en la agenda del negocio.</p><div className="form-grid"><label className="full">Nombre del cliente<input name="customerName" required placeholder="Ej: Carolina González" /></label><label>Correo electrónico<input name="customerEmail" type="email" required placeholder="cliente@correo.cl" /></label><label>Teléfono<input name="customerPhone" type="tel" placeholder="+56 9 1234 5678" /></label><label>Servicio<select name="serviceId" required defaultValue=""><option value="" disabled>Seleccionar servicio</option>{agendaServices.map(s=><option value={s.id} key={s.id}>{s.name} · ${Number(s.price_clp).toLocaleString('es-CL')}</option>)}</select></label><label>Profesional<select name="professionalId" required defaultValue=""><option value="" disabled>Seleccionar profesional</option>{agendaTeam.map(m=><option value={m.id} key={m.id}>{m.name} · {m.role}</option>)}</select></label><label>Fecha<input name="date" type="date" min={localDateKey(new Date())} defaultValue={localDateKey(focusDate)} required /></label><label>Hora<input name="time" type="time" min="08:00" max="18:00" step="900" defaultValue="14:00" required /></label><label className="full">Notas<textarea name="notes" rows={3} placeholder="Información útil para la atención (opcional)" /></label></div>{formError && <div className="form-error" role="alert">{formError}</div>}<div className="modal-footer"><button type="button" onClick={() => setShowNew(false)}>Cancelar</button><button type="submit" disabled={saving||agendaServices.length===0||agendaTeam.length===0}>{saving ? 'Guardando…' : 'Confirmar cita'}</button></div></form></div>}
   </div>;
 }
 

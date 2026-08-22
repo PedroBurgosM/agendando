@@ -13,7 +13,7 @@ export async function GET() {
   if (!user) return NextResponse.json({ error: 'Debes iniciar sesión.' }, { status: 401 });
 
   const result = await env.DB.prepare(`
-    SELECT b.id, b.starts_at, b.ends_at, b.status, b.payment_status, b.amount_clp,
+    SELECT b.id, b.service_id, b.professional_id, b.starts_at, b.ends_at, b.status, b.payment_status, b.amount_clp,
            c.name AS customer_name, c.email AS customer_email, c.phone AS customer_phone,
            s.name AS service_name, p.name AS professional_name
     FROM bookings b
