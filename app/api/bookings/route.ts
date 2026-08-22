@@ -2,12 +2,6 @@ import { env } from 'cloudflare:workers';
 import { NextResponse } from 'next/server';
 import { getChatGPTUser } from '../../chatgpt-auth';
 
-const serviceCatalog: Record<string, { duration: number; price: number }> = {
-  'Evaluación inicial': { duration: 60, price: 35000 },
-  'Sesión de seguimiento': { duration: 45, price: 28000 },
-  'Consulta online': { duration: 45, price: 25000 },
-};
-
 async function requireApiUser() {
   const user = await getChatGPTUser();
   if (!user) return null;
@@ -45,32 +39,28 @@ export async function POST(request: Request) {
   const customerName = String(input.customerName ?? '').trim();
   const customerEmail = String(input.customerEmail ?? '').trim().toLowerCase();
   const customerPhone = String(input.customerPhone ?? '').trim();
-  const serviceName = String(input.service ?? '');
+  const serviceId = Number(input.serviceId);
   const professionalName = String(input.professional ?? '');
   const date = String(input.date ?? '');
   const time = String(input.time ?? '');
   const notes = String(input.notes ?? '').trim();
-  const service = serviceCatalog[serviceName];
 
-  if (!customerName || !/^\S+@\S+\.\S+$/.test(customerEmail) || !service || !['Sofía Martínez','Martín Reyes'].includes(professionalName) || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time)) {
+  if (!customerName || !/^\S+@\S+\.\S+$/.test(customerEmail) || !Number.isInteger(serviceId) || !['Sofía Martínez','Martín Reyes'].includes(professionalName) || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time)) {
     return NextResponse.json({ error: 'Completa correctamente todos los campos obligatorios.' }, { status: 400 });
   }
 
   const start = new Date(`${date}T${time}:00-04:00`);
   if (Number.isNaN(start.getTime())) return NextResponse.json({ error: 'Fecha u hora inválida.' }, { status: 400 });
   const startsAt = Math.floor(start.getTime() / 1000);
-  const endsAt = startsAt + service.duration * 60;
   const db = env.DB;
 
   await db.prepare(`INSERT OR IGNORE INTO businesses (owner_id, name, slug, timezone, created_at) VALUES (?, 'Espacio Bienestar', ?, 'America/Santiago', ?)`).bind(user.userId, `espacio-${user.userId}`, Math.floor(Date.now() / 1000)).run();
   const business = await db.prepare('SELECT id FROM businesses WHERE owner_id = ? LIMIT 1').bind(user.userId).first<{ id: number }>();
   if (!business) return NextResponse.json({ error: 'No se pudo preparar el negocio.' }, { status: 500 });
 
-  let serviceRow = await db.prepare('SELECT id FROM services WHERE business_id = ? AND name = ? LIMIT 1').bind(business.id, serviceName).first<{ id: number }>();
-  if (!serviceRow) {
-    const result = await db.prepare('INSERT INTO services (business_id, name, duration_minutes, price_clp, active) VALUES (?, ?, ?, ?, 1)').bind(business.id, serviceName, service.duration, service.price).run();
-    serviceRow = { id: Number(result.meta.last_row_id) };
-  }
+  const serviceRow = await db.prepare('SELECT id,duration_minutes,price_clp FROM services WHERE id=? AND business_id=? AND active=1 LIMIT 1').bind(serviceId,business.id).first<{id:number;duration_minutes:number;price_clp:number}>();
+  if(!serviceRow)return NextResponse.json({error:'El servicio no existe o está pausado.'},{status:400});
+  const endsAt = startsAt + serviceRow.duration_minutes * 60;
 
   let professional = await db.prepare('SELECT id FROM professionals WHERE business_id = ? AND name = ? LIMIT 1').bind(business.id, professionalName).first<{ id: number }>();
   if (!professional) {
@@ -90,7 +80,7 @@ export async function POST(request: Request) {
     await db.prepare('UPDATE customers SET name = ?, phone = ?, notes = ? WHERE id = ?').bind(customerName, customerPhone || null, notes || null, customer.id).run();
   }
 
-  const inserted = await db.prepare(`INSERT INTO bookings (business_id, service_id, professional_id, customer_id, starts_at, ends_at, status, payment_status, amount_clp, created_at) VALUES (?, ?, ?, ?, ?, ?, 'confirmed', 'unpaid', ?, ?)`).bind(business.id, serviceRow.id, professional.id, customer.id, startsAt, endsAt, service.price, Math.floor(Date.now() / 1000)).run();
+  const inserted = await db.prepare(`INSERT INTO bookings (business_id, service_id, professional_id, customer_id, starts_at, ends_at, status, payment_status, amount_clp, created_at) VALUES (?, ?, ?, ?, ?, ?, 'confirmed', 'unpaid', ?, ?)`).bind(business.id, serviceRow.id, professional.id, customer.id, startsAt, endsAt, serviceRow.price_clp, Math.floor(Date.now() / 1000)).run();
 
   return NextResponse.json({ id: Number(inserted.meta.last_row_id), message: 'Cita agendada correctamente.' }, { status: 201 });
 }

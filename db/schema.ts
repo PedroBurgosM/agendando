@@ -7,7 +7,8 @@ export const businesses = sqliteTable('businesses', {
 }, (table) => [index('idx_businesses_owner_id').on(table.ownerId)]);
 export const services = sqliteTable('services', {
   id: integer('id').primaryKey({ autoIncrement: true }), businessId: integer('business_id').notNull().references(() => businesses.id),
-  name: text('name').notNull(), durationMinutes: integer('duration_minutes').notNull(), priceClp: integer('price_clp').notNull(), active: integer('active', { mode:'boolean' }).notNull().default(true),
+  name: text('name').notNull(), description: text('description'), mode: text('mode', { enum:['presencial','online','hibrido'] }).notNull().default('presencial'),
+  durationMinutes: integer('duration_minutes').notNull(), priceClp: integer('price_clp').notNull(), depositPercent: integer('deposit_percent').notNull().default(0), active: integer('active', { mode:'boolean' }).notNull().default(true),
 }, (table) => [uniqueIndex('idx_services_business_name').on(table.businessId, table.name)]);
 export const professionals = sqliteTable('professionals', {
   id: integer('id').primaryKey({ autoIncrement: true }), businessId: integer('business_id').notNull().references(() => businesses.id),
