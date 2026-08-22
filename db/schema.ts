@@ -12,7 +12,7 @@ export const services = sqliteTable('services', {
 }, (table) => [uniqueIndex('idx_services_business_name').on(table.businessId, table.name)]);
 export const professionals = sqliteTable('professionals', {
   id: integer('id').primaryKey({ autoIncrement: true }), businessId: integer('business_id').notNull().references(() => businesses.id),
-  name: text('name').notNull(), email: text('email').notNull(), active: integer('active', { mode:'boolean' }).notNull().default(true),
+  name: text('name').notNull(), email: text('email').notNull(), phone: text('phone'), role: text('role').notNull().default('Especialista'), color: text('color').notNull().default('#7559f2'), active: integer('active', { mode:'boolean' }).notNull().default(true),
 }, (table) => [uniqueIndex('idx_professionals_business_name').on(table.businessId, table.name)]);
 export const customers = sqliteTable('customers', {
   id: integer('id').primaryKey({ autoIncrement: true }), businessId: integer('business_id').notNull().references(() => businesses.id),

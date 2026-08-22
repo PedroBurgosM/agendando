@@ -40,12 +40,12 @@ export async function POST(request: Request) {
   const customerEmail = String(input.customerEmail ?? '').trim().toLowerCase();
   const customerPhone = String(input.customerPhone ?? '').trim();
   const serviceId = Number(input.serviceId);
-  const professionalName = String(input.professional ?? '');
+  const professionalId = Number(input.professionalId);
   const date = String(input.date ?? '');
   const time = String(input.time ?? '');
   const notes = String(input.notes ?? '').trim();
 
-  if (!customerName || !/^\S+@\S+\.\S+$/.test(customerEmail) || !Number.isInteger(serviceId) || !['Sofía Martínez','Martín Reyes'].includes(professionalName) || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time)) {
+  if (!customerName || !/^\S+@\S+\.\S+$/.test(customerEmail) || !Number.isInteger(serviceId) || !Number.isInteger(professionalId) || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time)) {
     return NextResponse.json({ error: 'Completa correctamente todos los campos obligatorios.' }, { status: 400 });
   }
 
@@ -62,12 +62,8 @@ export async function POST(request: Request) {
   if(!serviceRow)return NextResponse.json({error:'El servicio no existe o está pausado.'},{status:400});
   const endsAt = startsAt + serviceRow.duration_minutes * 60;
 
-  let professional = await db.prepare('SELECT id FROM professionals WHERE business_id = ? AND name = ? LIMIT 1').bind(business.id, professionalName).first<{ id: number }>();
-  if (!professional) {
-    const email = professionalName.startsWith('Sofía') ? 'sofia@nexo.demo' : 'martin@nexo.demo';
-    const result = await db.prepare('INSERT INTO professionals (business_id, name, email, active) VALUES (?, ?, ?, 1)').bind(business.id, professionalName, email).run();
-    professional = { id: Number(result.meta.last_row_id) };
-  }
+  const professional = await db.prepare('SELECT id FROM professionals WHERE id=? AND business_id=? AND active=1 LIMIT 1').bind(professionalId,business.id).first<{id:number}>();
+  if(!professional)return NextResponse.json({error:'El profesional no existe o su agenda está pausada.'},{status:400});
 
   const conflict = await db.prepare(`SELECT id FROM bookings WHERE professional_id = ? AND status != 'cancelled' AND starts_at < ? AND ends_at > ? LIMIT 1`).bind(professional.id, endsAt, startsAt).first();
   if (conflict) return NextResponse.json({ error: 'Ese profesional ya tiene una reserva en ese horario.' }, { status: 409 });
