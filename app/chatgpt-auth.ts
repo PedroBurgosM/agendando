@@ -1,11 +1,13 @@
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
+import { verifySessionToken } from './lib/auth';
 
 export type ChatGPTUser = {
   userId: string;
   displayName: string;
   email: string;
   fullName: string | null;
+  role?: string;
 };
 
 const USER_ID_HEADER = 'oai-authenticated-user-id';
@@ -18,11 +20,46 @@ const SIGN_IN_PATH = '/signin-with-chatgpt';
 const SIGN_OUT_PATH = '/signout-with-chatgpt';
 const CALLBACK_PATH = '/callback';
 
+function extractCookie(cookieHeader: string | null, key: string): string | null {
+  if (!cookieHeader) return null;
+  const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${key}=([^;]*)`));
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
 export async function getChatGPTUser(): Promise<ChatGPTUser | null> {
   const requestHeaders = await headers();
+
+  // 1. Check for Agendando session cookie or Authorization header
+  const authHeader = requestHeaders.get('authorization');
+  let token: string | null = null;
+  if (authHeader && authHeader.toLowerCase().startsWith('bearer ')) {
+    token = authHeader.slice(7).trim();
+  }
+
+  if (!token) {
+    const cookieHeader = requestHeaders.get('cookie');
+    token = extractCookie(cookieHeader, 'agendando_session');
+  }
+
+  if (token) {
+    const session = await verifySessionToken(token);
+    if (session) {
+      return {
+        userId: String(session.id),
+        displayName: session.name,
+        email: session.email,
+        fullName: session.name,
+        role: session.role,
+      };
+    }
+  }
+
+  // 2. Check OpenAI headers (ChatGPT Sites environment)
   const userId = requestHeaders.get(USER_ID_HEADER);
   const email = requestHeaders.get(USER_EMAIL_HEADER);
-  if (!userId || !email) return null;
+  if (!userId || !email) {
+    return null;
+  }
 
   const encodedFullName = requestHeaders.get(USER_FULL_NAME_HEADER);
   const fullName =

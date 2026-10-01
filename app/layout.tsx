@@ -13,19 +13,24 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL('https://nexo-agenda.franciscojavie6595.chatgpt.site'),
-  title: 'Nexo — Agenda inteligente para tu negocio',
-  description: 'Gestiona reservas, clientes, pagos y recordatorios desde un solo lugar.',
+  metadataBase: new URL('https://agendando.site'),
+  title: 'Agendando — Agenda, Organiza, Logra | Control de Alumnos y Clases',
+  description: 'Sistema integral de gestión de alumnos, cupos, clases particulares y grupales, mensualidades y recordatorios por WhatsApp.',
   openGraph: {
-    title: 'Nexo — Agenda inteligente para tu negocio',
-    description: 'Gestiona reservas, clientes, pagos y recordatorios desde un solo lugar.',
-    images: [{ url: '/og.png', width: 1200, height: 630, alt: 'Nexo — Agenda inteligente para tu negocio' }],
+    title: 'Agendando — Agenda, Organiza, Logra',
+    description: 'Sistema integral de gestión de alumnos, cupos, clases particulares y grupales, mensualidades y recordatorios por WhatsApp.',
+    images: [{ url: '/logo.png', width: 1000, height: 800, alt: 'Agendando — Agenda, Organiza, Logra' }],
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Nexo — Agenda inteligente para tu negocio',
-    description: 'Gestiona reservas, clientes, pagos y recordatorios desde un solo lugar.',
-    images: ['/og.png'],
+    title: 'Agendando — Agenda, Organiza, Logra',
+    description: 'Sistema integral de gestión de alumnos, cupos, clases particulares y grupales, mensualidades y recordatorios por WhatsApp.',
+    images: ['/logo.png'],
+  },
+  icons: {
+    icon: '/favicon.png',
+    shortcut: '/favicon.png',
+    apple: '/logo-icon.png',
   },
 };
 
@@ -36,9 +41,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="es">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
+      <body className={`${geistSans.variable} ${geistMono.variable}`}>
         {children}
       </body>
     </html>
