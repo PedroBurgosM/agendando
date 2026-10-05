@@ -1,6 +1,7 @@
 'use client';
 
 import { type CSSProperties, type FormEvent, useEffect, useMemo, useState } from 'react';
+import { ProfilesModule } from './components/ProfilesModule';
 
 const chileDateParts = (value: Date) => Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Santiago', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(value).filter(p => p.type !== 'literal').map(p => [p.type, p.value]));
 const localDateKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -8,7 +9,15 @@ const bookingDateKey = (seconds: number) => { const p = chileDateParts(new Date(
 const startOfWeek = (date: Date) => { const result = new Date(date); result.setHours(12, 0, 0, 0); result.setDate(result.getDate() - ((result.getDay() + 6) % 7)); return result; };
 const addDays = (date: Date, days: number) => { const result = new Date(date); result.setDate(result.getDate() + days); return result; };
 
-function SummaryDashboard({ setActive, demo }: { setActive: (view: string) => void; demo: (msg: string) => void }) {
+function SummaryDashboard({
+  setActive,
+  demo,
+  sessionUser
+}: {
+  setActive: (view: string) => void;
+  demo: (msg: string) => void;
+  sessionUser?: { name?: string | null; email?: string | null } | null;
+}) {
   const [bookings, setBookings] = useState<BookingRow[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [services, setServices] = useState<Service[]>([]);
@@ -129,12 +138,24 @@ function SummaryDashboard({ setActive, demo }: { setActive: (view: string) => vo
     }).format(new Date(seconds * 1000));
   }
 
+  const greetingName = useMemo(() => {
+    if (!sessionUser?.name) return '';
+    const first = sessionUser.name.trim().split(' ')[0];
+    return first || sessionUser.name.trim();
+  }, [sessionUser?.name]);
+
+  const greetingTitle = useMemo(() => {
+    const hour = new Date().getHours();
+    const timeWord = hour < 12 ? 'Buenos días' : hour < 20 ? 'Buenas tardes' : 'Buenas noches';
+    return greetingName ? `${timeWord}, ${greetingName}` : timeWord;
+  }, [greetingName]);
+
   return (
     <div className="content">
       <div className="welcome-row">
         <div>
           <p className="eyebrow">{today}</p>
-          <h1>Buenos días, Pedro</h1>
+          <h1>{greetingTitle}</h1>
           <p>Control de alumnos, clases y mensualidades al día.</p>
         </div>
         <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
@@ -408,11 +429,18 @@ interface SessionUser {
   name: string;
   email: string;
   role: string;
+  isSuperAdmin?: boolean;
+  business?: {
+    id: number;
+    name: string;
+    slug: string;
+    phone?: string | null;
+  } | null;
 }
 
 function LoginView({ onLoginSuccess, demo }: { onLoginSuccess: (user: SessionUser) => void; demo: (msg: string) => void }) {
-  const [email, setEmail] = useState('admin@agendando.cl');
-  const [password, setPassword] = useState('admin123');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -580,46 +608,6 @@ function LoginView({ onLoginSuccess, demo }: { onLoginSuccess: (user: SessionUse
             </div>
           </div>
 
-          {/* Quick preset credentials helper */}
-          <div style={{
-            background: '#f1f5f9',
-            border: '1px dashed #cbd5e1',
-            borderRadius: '8px',
-            padding: '10px 12px',
-            marginBottom: '20px',
-            fontSize: '12px',
-            color: '#475569',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: '8px'
-          }}>
-            <div>
-              <span style={{ fontWeight: 600, color: '#1e293b', display: 'block' }}>⚡ Acceso rápido Woodland / Demo:</span>
-              <span style={{ color: '#64748b' }}>admin@agendando.cl / admin123</span>
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                setEmail('admin@agendando.cl');
-                setPassword('admin123');
-              }}
-              style={{
-                background: '#ffffff',
-                border: '1px solid #cbd5e1',
-                padding: '4px 8px',
-                borderRadius: '6px',
-                fontSize: '11px',
-                fontWeight: 600,
-                color: '#2563eb',
-                cursor: 'pointer',
-                whiteSpace: 'nowrap'
-              }}
-            >
-              Usar datos
-            </button>
-          </div>
-
           <button
             type="submit"
             disabled={loading}
@@ -668,8 +656,6 @@ function LoginView({ onLoginSuccess, demo }: { onLoginSuccess: (user: SessionUse
   );
 }
 
-const nav = ['Resumen', 'Agenda', 'Reservas', 'Alumnos', 'Pagos', 'Servicios', 'Equipo'];
-
 export default function Home() {
   const [sessionUser, setSessionUser] = useState<SessionUser | null>(null);
   const [authChecking, setAuthChecking] = useState(true);
@@ -677,6 +663,36 @@ export default function Home() {
   const [notice, setNotice] = useState('');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const today = useMemo(() => new Intl.DateTimeFormat('es-CL', { weekday: 'long', day: 'numeric', month: 'long' }).format(new Date()), []);
+
+  const isSuper = Boolean(
+    sessionUser?.isSuperAdmin ||
+    sessionUser?.role === 'superadmin' ||
+    sessionUser?.email?.toLowerCase().trim() === 'admin@agendando.cl' ||
+    String(sessionUser?.id) === '1'
+  );
+
+  const navItems = useMemo(() => {
+    if (isSuper) {
+      return [
+        { key: 'Perfiles', label: 'Perfiles y Clientes', icon: '👥' },
+      ];
+    }
+    return [
+      { key: 'Resumen', label: 'Resumen', icon: '⌂' },
+      { key: 'Agenda', label: 'Agenda', icon: '▦' },
+      { key: 'Reservas', label: 'Reservas', icon: '◫' },
+      { key: 'Alumnos', label: 'Alumnos', icon: '♙' },
+      { key: 'Pagos', label: 'Pagos', icon: '💳' },
+      { key: 'Servicios', label: 'Servicios', icon: '◇' },
+      { key: 'Equipo', label: 'Equipo', icon: '♚' },
+    ];
+  }, [isSuper]);
+
+  useEffect(() => {
+    if (isSuper && active !== 'Perfiles') {
+      setActive('Perfiles');
+    }
+  }, [isSuper, active]);
 
   function demo(message: string) {
     setNotice(message);
@@ -690,6 +706,15 @@ export default function Home() {
         const data = await res.json() as { authenticated: boolean; user: SessionUser };
         if (data.authenticated && data.user) {
           setSessionUser(data.user);
+          const superCheck = Boolean(
+            data.user.isSuperAdmin ||
+            data.user.role === 'superadmin' ||
+            data.user.email?.toLowerCase().trim() === 'admin@agendando.cl' ||
+            String(data.user.id) === '1'
+          );
+          if (superCheck) {
+            setActive('Perfiles');
+          }
         } else {
           setSessionUser(null);
         }
@@ -790,40 +815,42 @@ export default function Home() {
           </button>
         </div>
         <nav aria-label="Navegación principal">
-          {nav.map((item, index) => (
+          {navItems.map((item) => (
             <button
-              key={item}
-              className={active === item ? 'nav-item active' : 'nav-item'}
+              key={item.key}
+              className={active === item.key ? 'nav-item active' : 'nav-item'}
               onClick={() => {
-                setActive(item);
+                setActive(item.key);
                 setMobileMenuOpen(false);
               }}
             >
-              <span className="nav-icon" aria-hidden="true">{['⌂','▦','◫','♙','💳','◇','♚'][index]}</span>{item}
+              <span className="nav-icon" aria-hidden="true">{item.icon}</span>{item.label}
             </button>
           ))}
         </nav>
         <div className="sidebar-bottom">
-          <button
-            className={active==='Configuración'?'nav-item active':'nav-item'}
-            onClick={() => {
-              setActive('Configuración');
-              setMobileMenuOpen(false);
-            }}
-          >
-            ⚙ Configuración
-          </button>
+          {!isSuper && (
+            <button
+              className={active === 'Configuración' ? 'nav-item active' : 'nav-item'}
+              onClick={() => {
+                setActive('Configuración');
+                setMobileMenuOpen(false);
+              }}
+            >
+              ⚙ Configuración
+            </button>
+          )}
           <div className="profile" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
-              <span style={{ width: 34, height: 34, borderRadius: '50%', background: '#6366f1', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', flexShrink: 0 }}>
+              <span style={{ width: 34, height: 34, borderRadius: '50%', background: isSuper ? '#7559f2' : '#6366f1', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', flexShrink: 0 }}>
                 {sessionUser?.name ? sessionUser.name.charAt(0).toUpperCase() : 'A'}
               </span>
               <div style={{ minWidth: 0 }}>
                 <strong style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '13px' }}>
                   {sessionUser?.name || 'Administrador'}
                 </strong>
-                <small style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#94a3b8', fontSize: '11px' }}>
-                  {sessionUser?.email || 'admin@agendando.cl'}
+                <small style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: isSuper ? '#7559f2' : '#94a3b8', fontSize: '11px', fontWeight: isSuper ? 600 : 400 }}>
+                  {isSuper ? 'SUPER ADMIN' : sessionUser?.email}
                 </small>
               </div>
             </div>
@@ -865,29 +892,61 @@ export default function Home() {
             <img src="/logo-icon.png" alt="Logo Agendando" className="mobile-brand-logo" />
             <span>Agendando</span>
           </div>
-          <div className="search">
-            <span>⌕</span>
-            <input
-              aria-label="Buscar"
-              placeholder="Buscar alumnos, clases o reservas..."
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  setActive('Reservas');
-                }
-              }}
-            />
-            <kbd>↵ Enter</kbd>
-          </div>
+          {isSuper ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{
+                fontSize: '12px',
+                fontWeight: 700,
+                background: '#ede9fe',
+                color: '#6d28d9',
+                padding: '4px 12px',
+                borderRadius: '20px',
+                letterSpacing: '0.4px'
+              }}>
+                🛡️ Panel Super Administrador
+              </span>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <span style={{
+                fontSize: '18px',
+                fontWeight: 700,
+                color: '#0f172a',
+                letterSpacing: '-0.3px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px'
+              }}>
+                <span style={{
+                  background: '#f1f5f9',
+                  border: '1px solid #e2e8f0',
+                  borderRadius: '8px',
+                  padding: '4px 8px',
+                  fontSize: '14px',
+                  color: '#7559f2'
+                }}>
+                  🏢
+                </span>
+                <span>{sessionUser?.business?.name || 'Mi Negocio'}</span>
+              </span>
+            </div>
+          )}
           <div className="top-actions">
-            <button
-              className="public-link"
-              onClick={() => window.location.assign('/reservar')}
-              title="Ver mi página pública de reservas"
-            >
-              <span>↗</span>
-              <span className="public-link-text-full">Ver mi página</span>
-              <span className="public-link-text-short">Mi página</span>
-            </button>
+            {!isSuper && (
+              <button
+                className="public-link"
+                onClick={() => {
+                  const slug = sessionUser?.business?.slug;
+                  const url = slug ? `/reservar?negocio=${slug}` : '/reservar';
+                  window.open(url, '_blank');
+                }}
+                title="Ver mi página pública de reservas"
+              >
+                <span>↗</span>
+                <span className="public-link-text-full">Ver mi página</span>
+                <span className="public-link-text-short">Mi página</span>
+              </button>
+            )}
             <button
               type="button"
               onClick={handleLogout}
@@ -912,7 +971,9 @@ export default function Home() {
           </div>
         </header>
 
-        {active === 'Agenda' ? (
+        {isSuper ? (
+          <ProfilesModule demo={demo} />
+        ) : active === 'Agenda' ? (
           <AgendaModule demo={demo} />
         ) : active === 'Reservas' ? (
           <BookingsModule demo={demo} />
@@ -927,59 +988,72 @@ export default function Home() {
         ) : active === 'Configuración' ? (
           <SettingsModule demo={demo} />
         ) : (
-          <SummaryDashboard setActive={setActive} demo={demo} />
+          <SummaryDashboard setActive={setActive} demo={demo} sessionUser={sessionUser} />
         )}
       </section>
 
       {/* Barra de navegación inferior fija para móviles */}
       <nav className="mobile-bottom-nav" aria-label="Navegación móvil">
-        <button
-          type="button"
-          className={active === 'Resumen' ? 'active' : ''}
-          onClick={() => setActive('Resumen')}
-        >
-          <span className="nav-icon">⌂</span>
-          <small>Resumen</small>
-        </button>
-        <button
-          type="button"
-          className={active === 'Agenda' ? 'active' : ''}
-          onClick={() => setActive('Agenda')}
-        >
-          <span className="nav-icon">▦</span>
-          <small>Agenda</small>
-        </button>
-        <button
-          type="button"
-          className={active === 'Reservas' ? 'active' : ''}
-          onClick={() => setActive('Reservas')}
-        >
-          <span className="nav-icon">◫</span>
-          <small>Reservas</small>
-        </button>
-        <button
-          type="button"
-          className={(active === 'Alumnos' || active === 'Clientes') ? 'active' : ''}
-          onClick={() => setActive('Alumnos')}
-        >
-          <span className="nav-icon">♙</span>
-          <small>Alumnos</small>
-        </button>
-        <button
-          type="button"
-          className={(active === 'Pagos' || active === 'Cobranzas') ? 'active' : ''}
-          onClick={() => setActive('Pagos')}
-        >
-          <span className="nav-icon">💳</span>
-          <small>Pagos</small>
-        </button>
-        <button
-          type="button"
-          onClick={() => setMobileMenuOpen(true)}
-        >
-          <span className="nav-icon">☰</span>
-          <small>Menú</small>
-        </button>
+        {isSuper ? (
+          <button
+            type="button"
+            className="active"
+            onClick={() => setActive('Perfiles')}
+          >
+            <span className="nav-icon">👥</span>
+            <small>Clientes</small>
+          </button>
+        ) : (
+          <>
+            <button
+              type="button"
+              className={active === 'Resumen' ? 'active' : ''}
+              onClick={() => setActive('Resumen')}
+            >
+              <span className="nav-icon">⌂</span>
+              <small>Resumen</small>
+            </button>
+            <button
+              type="button"
+              className={active === 'Agenda' ? 'active' : ''}
+              onClick={() => setActive('Agenda')}
+            >
+              <span className="nav-icon">▦</span>
+              <small>Agenda</small>
+            </button>
+            <button
+              type="button"
+              className={active === 'Reservas' ? 'active' : ''}
+              onClick={() => setActive('Reservas')}
+            >
+              <span className="nav-icon">◫</span>
+              <small>Reservas</small>
+            </button>
+            <button
+              type="button"
+              className={(active === 'Alumnos' || active === 'Clientes') ? 'active' : ''}
+              onClick={() => setActive('Alumnos')}
+            >
+              <span className="nav-icon">♙</span>
+              <small>Alumnos</small>
+            </button>
+            <button
+              type="button"
+              className={(active === 'Pagos' || active === 'Cobranzas') ? 'active' : ''}
+              onClick={() => setActive('Pagos')}
+            >
+              <span className="nav-icon">💳</span>
+              <small>Pagos</small>
+            </button>
+            <button
+              type="button"
+              onClick={() => setMobileMenuOpen(true)}
+            >
+              <span className="nav-icon">☰</span>
+              <small>Menú</small>
+            </button>
+          </>
+        )}
       </nav>
 
       {notice && <div className="toast" role="status">✓ {notice}</div>}

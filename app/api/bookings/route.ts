@@ -2,35 +2,17 @@ import { NextResponse } from 'next/server';
 import { getChatGPTUser } from '../../chatgpt-auth';
 import { getSupabase } from '../../lib/supabase';
 
+import { getBusinessForUser } from '../../lib/tenant';
+
 async function requireApiUser() {
   const user = await getChatGPTUser();
   if (!user) return null;
   return user;
 }
 
-async function getBusiness(supabase: any, ownerId: string) {
-  let { data: business } = await supabase
-    .from('businesses')
-    .select('*')
-    .or(`owner_id.eq.${ownerId},owner_id.eq.1,owner_id.eq.usr_local_instructor`)
-    .order('id', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (!business) {
-    const { data: created } = await supabase
-      .from('businesses')
-      .insert({
-        owner_id: ownerId,
-        name: 'Espacio de Clases',
-        slug: `espacio-${ownerId}-${Date.now()}`,
-        timezone: 'America/Santiago',
-      })
-      .select()
-      .single();
-    business = created;
-  }
-  return business;
+async function getBusiness(supabase: any, user: any, request?: Request) {
+  const bId = request?.headers?.get('x-business-id');
+  return getBusinessForUser(supabase, user, true, bId ? Number(bId) : null);
 }
 
 export async function GET(request: Request) {
@@ -40,7 +22,7 @@ export async function GET(request: Request) {
   const supabase = getSupabase();
   if (!supabase) return NextResponse.json({ error: 'Supabase no configurado.' }, { status: 500 });
 
-  const business = await getBusiness(supabase, user.userId);
+  const business = await getBusiness(supabase, user, request);
   if (!business) return NextResponse.json({ bookings: [] });
 
   const { searchParams } = new URL(request.url);
@@ -131,7 +113,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Completa correctamente la fecha, hora, clase e instructor.' }, { status: 400 });
   }
 
-  const business = await getBusiness(supabase, user.userId);
+  const business = await getBusiness(supabase, user, request);
   if (!business) return NextResponse.json({ error: 'No se pudo preparar el negocio.' }, { status: 500 });
 
   const { data: serviceRow } = await supabase
@@ -325,7 +307,7 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: 'Reserva inválida.' }, { status: 400 });
   }
 
-  const business = await getBusiness(supabase, user.userId);
+  const business = await getBusiness(supabase, user, request);
   if (!business) return NextResponse.json({ error: 'Negocio no encontrado.' }, { status: 404 });
 
   const updatePayload: Record<string, unknown> = {};
@@ -387,7 +369,7 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: 'ID de reserva inválido.' }, { status: 400 });
   }
 
-  const business = await getBusiness(supabase, user.userId);
+  const business = await getBusiness(supabase, user, request);
   if (!business) return NextResponse.json({ error: 'Negocio no encontrado.' }, { status: 404 });
 
   const { error } = await supabase.from('bookings').delete().eq('id', id).eq('business_id', business.id);

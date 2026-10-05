@@ -134,6 +134,9 @@ button { cursor: pointer; }
   text-transform: uppercase;
   color: #64748b;
 }
+.mobile-menu {
+  display: none;
+}
 .mobile-brand {
   display: none;
   align-items: center;

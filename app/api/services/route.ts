@@ -1,40 +1,21 @@
 import { NextResponse } from 'next/server';
 import { getChatGPTUser } from '../../chatgpt-auth';
 import { getSupabase } from '../../lib/supabase';
+import { getBusinessForUser } from '../../lib/tenant';
 
-async function businessFor(supabase: any, ownerId: string, create = false) {
-  let { data: b } = await supabase
-    .from('businesses')
-    .select('*')
-    .or(`owner_id.eq.${ownerId},owner_id.eq.1,owner_id.eq.usr_local_instructor`)
-    .order('id', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (!b && create) {
-    const { data: created } = await supabase
-      .from('businesses')
-      .insert({
-        owner_id: ownerId,
-        name: 'Espacio de Clases',
-        slug: `espacio-${ownerId}-${Date.now()}`,
-        timezone: 'America/Santiago',
-      })
-      .select()
-      .single();
-    b = created;
-  }
-  return b;
+async function businessFor(supabase: any, user: any, request?: Request, create = false) {
+  const bId = request?.headers?.get('x-business-id');
+  return getBusinessForUser(supabase, user, create, bId ? Number(bId) : null);
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   const user = await getChatGPTUser();
   if (!user) return NextResponse.json({ error: 'Debes iniciar sesión.' }, { status: 401 });
 
   const supabase = getSupabase();
   if (!supabase) return NextResponse.json({ error: 'Supabase no configurado.' }, { status: 500 });
 
-  const b = await businessFor(supabase, user.userId, true);
+  const b = await businessFor(supabase, user, request, true);
   if (!b) return NextResponse.json({ error: 'No se pudo preparar el negocio.' }, { status: 500 });
 
   const { data: services, error } = await supabase
@@ -117,7 +98,7 @@ export async function POST(request: Request) {
   const supabase = getSupabase();
   if (!supabase) return NextResponse.json({ error: 'Supabase no configurado.' }, { status: 500 });
 
-  const b = await businessFor(supabase, user.userId, true);
+  const b = await businessFor(supabase, user, request, true);
   if (!b) return NextResponse.json({ error: 'No se pudo preparar el negocio.' }, { status: 500 });
 
   const data = values((await request.json()) as Record<string, unknown>);
@@ -165,7 +146,7 @@ export async function PATCH(request: Request) {
   const supabase = getSupabase();
   if (!supabase) return NextResponse.json({ error: 'Supabase no configurado.' }, { status: 500 });
 
-  const b = await businessFor(supabase, user.userId);
+  const b = await businessFor(supabase, user, request);
   if (!b) return NextResponse.json({ error: 'Clase no encontrada.' }, { status: 404 });
 
   const body = (await request.json()) as Record<string, unknown>;
@@ -224,7 +205,7 @@ export async function DELETE(request: Request) {
   const supabase = getSupabase();
   if (!supabase) return NextResponse.json({ error: 'Supabase no configurado.' }, { status: 500 });
 
-  const b = await businessFor(supabase, user.userId);
+  const b = await businessFor(supabase, user, request);
   if (!b) return NextResponse.json({ error: 'Negocio no encontrado.' }, { status: 404 });
 
   let id: number | null = null;

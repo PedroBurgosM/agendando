@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createSessionToken, verifyPassword } from '../../../lib/auth';
 import { getSupabase } from '../../../lib/supabase';
+import { getBusinessForUser } from '../../../lib/tenant';
 
 export async function POST(request: Request) {
   try {
@@ -33,6 +34,13 @@ export async function POST(request: Request) {
       );
     }
 
+    if (user.password_hash && user.password_hash.startsWith('DISABLED:')) {
+      return NextResponse.json(
+        { error: 'Esta cuenta se encuentra dada de baja o suspendida. Comunícate con el administrador.' },
+        { status: 403 }
+      );
+    }
+
     const isValid = await verifyPassword(password, user.password_hash);
     if (!isValid) {
       return NextResponse.json(
@@ -41,11 +49,32 @@ export async function POST(request: Request) {
       );
     }
 
+    const emailLower = (user.email || '').toLowerCase().trim();
+    const superAdmin = emailLower === 'admin@agendando.cl' || user.role === 'superadmin' || String(user.id) === '1';
+
+    let business = null;
+    if (supabase) {
+      business = await getBusinessForUser(supabase, {
+        userId: String(user.id),
+        displayName: user.name,
+        email: user.email,
+        fullName: user.name,
+        role: user.role,
+      }, false);
+    }
+
     const authUser = {
       id: user.id,
       email: user.email,
       name: user.name,
-      role: user.role,
+      role: superAdmin ? 'superadmin' : (user.role || 'admin'),
+      isSuperAdmin: superAdmin,
+      business: business ? {
+        id: business.id,
+        name: business.name,
+        slug: business.slug,
+        phone: business.phone,
+      } : null,
     };
 
     const token = await createSessionToken(authUser);

@@ -1,43 +1,21 @@
 import { NextResponse } from 'next/server';
 import { getChatGPTUser } from '../../chatgpt-auth';
 import { getSupabase } from '../../lib/supabase';
+import { getBusinessForUser } from '../../lib/tenant';
 
-async function business(supabase: any, owner: string, create = false) {
-  let { data: b } = await supabase
-    .from('businesses')
-    .select('*')
-    .or(`owner_id.eq.${owner},owner_id.eq.1,owner_id.eq.usr_local_instructor`)
-    .order('id', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (!b && create) {
-    const { data: created } = await supabase
-      .from('businesses')
-      .insert({
-        owner_id: owner,
-        name: 'Espacio Bienestar',
-        slug: `espacio-${owner}-${Date.now()}`,
-        timezone: 'America/Santiago',
-        currency: 'CLP',
-        cancellation_hours: 24,
-        booking_window_days: 60,
-      })
-      .select()
-      .single();
-    b = created;
-  }
-  return b;
+async function business(supabase: any, user: any, request?: Request, create = false) {
+  const bId = request?.headers?.get('x-business-id');
+  return getBusinessForUser(supabase, user, create, bId ? Number(bId) : null);
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   const u = await getChatGPTUser();
   if (!u) return NextResponse.json({ error: 'Debes iniciar sesión.' }, { status: 401 });
 
   const supabase = getSupabase();
   if (!supabase) return NextResponse.json({ error: 'Supabase no configurado.' }, { status: 500 });
 
-  const settings = await business(supabase, u.userId, true);
+  const settings = await business(supabase, u, request, true);
   return NextResponse.json({ settings });
 }
 
@@ -48,7 +26,7 @@ export async function PATCH(request: Request) {
   const supabase = getSupabase();
   if (!supabase) return NextResponse.json({ error: 'Supabase no configurado.' }, { status: 500 });
 
-  const b = await business(supabase, u.userId, true);
+  const b = await business(supabase, u, request, true);
   if (!b) return NextResponse.json({ error: 'Negocio no encontrado.' }, { status: 404 });
 
   const x = (await request.json()) as Record<string, unknown>;

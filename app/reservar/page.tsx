@@ -48,10 +48,21 @@ export default function BookingPage() {
     customerPhone?: string;
   } | null>(null);
 
+  const [businessSlug, setBusinessSlug] = useState<string>('');
+
   useEffect(() => {
-    fetch('/api/public/bookings', { cache: 'no-store' })
+    const params = new URLSearchParams(window.location.search);
+    const s = params.get('negocio') || params.get('slug') || '';
+    setBusinessSlug(s);
+    const endpoint = s ? `/api/public/bookings?slug=${encodeURIComponent(s)}` : '/api/public/bookings';
+
+    fetch(endpoint, { cache: 'no-store' })
       .then(r => r.json())
       .then((d: any) => {
+        if (d.error) {
+          setError(d.error);
+          return;
+        }
         const catalog = d as Catalog;
         setData(catalog);
         setService(catalog.services[0]?.id ?? null);
@@ -66,7 +77,7 @@ export default function BookingPage() {
     setSaving(true);
     setError('');
     const payload = Object.fromEntries(new FormData(e.currentTarget).entries());
-    Object.assign(payload, { serviceId: String(service), professionalId: String(professional), time: slot });
+    Object.assign(payload, { serviceId: String(service), professionalId: String(professional), time: slot, slug: businessSlug });
 
     try {
       const r = await fetch('/api/public/bookings', {

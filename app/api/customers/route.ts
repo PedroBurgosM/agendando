@@ -1,40 +1,21 @@
 import { NextResponse } from 'next/server';
 import { getChatGPTUser } from '../../chatgpt-auth';
 import { getSupabase } from '../../lib/supabase';
+import { getBusinessForUser } from '../../lib/tenant';
 
-async function getBusiness(supabase: any, ownerId: string, create = false) {
-  let { data: business } = await supabase
-    .from('businesses')
-    .select('*')
-    .or(`owner_id.eq.${ownerId},owner_id.eq.1,owner_id.eq.usr_local_instructor`)
-    .order('id', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  if (!business && create) {
-    const { data: created } = await supabase
-      .from('businesses')
-      .insert({
-        owner_id: ownerId,
-        name: 'Espacio de Clases',
-        slug: `espacio-${ownerId}-${Date.now()}`,
-        timezone: 'America/Santiago',
-      })
-      .select()
-      .single();
-    business = created;
-  }
-  return business;
+async function getBusiness(supabase: any, user: any, request?: Request, create = false) {
+  const bId = request?.headers?.get('x-business-id');
+  return getBusinessForUser(supabase, user, create, bId ? Number(bId) : null);
 }
 
-export async function GET() {
+export async function GET(request: Request) {
   const user = await getChatGPTUser();
   if (!user) return NextResponse.json({ error: 'Debes iniciar sesión.' }, { status: 401 });
 
   const supabase = getSupabase();
   if (!supabase) return NextResponse.json({ error: 'Supabase no configurado.' }, { status: 500 });
 
-  const business = await getBusiness(supabase, user.userId);
+  const business = await getBusiness(supabase, user, request);
   if (!business) {
     return NextResponse.json({ customers: [], visits: [], stats: { total: 0, active: 0, pending: 0, overdue: 0, inactive: 0, monthlyRevenue: 0 } });
   }
@@ -170,7 +151,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Ingresa un correo electrónico válido.' }, { status: 400 });
   }
 
-  const business = await getBusiness(supabase, user.userId, true);
+  const business = await getBusiness(supabase, user, request, true);
   if (!business) return NextResponse.json({ error: 'No se pudo preparar el negocio.' }, { status: 500 });
 
   const { data: duplicate } = await supabase
@@ -227,7 +208,7 @@ export async function PATCH(request: Request) {
   const supabase = getSupabase();
   if (!supabase) return NextResponse.json({ error: 'Supabase no configurado.' }, { status: 500 });
 
-  const business = await getBusiness(supabase, user.userId);
+  const business = await getBusiness(supabase, user, request);
   if (!business) return NextResponse.json({ error: 'Negocio no encontrado.' }, { status: 404 });
 
   const body = (await request.json()) as Record<string, unknown>;
@@ -324,7 +305,7 @@ export async function DELETE(request: Request) {
   const supabase = getSupabase();
   if (!supabase) return NextResponse.json({ error: 'Supabase no configurado.' }, { status: 500 });
 
-  const business = await getBusiness(supabase, user.userId);
+  const business = await getBusiness(supabase, user, request);
   if (!business) return NextResponse.json({ error: 'Negocio no encontrado.' }, { status: 404 });
 
   let id: number | null = null;

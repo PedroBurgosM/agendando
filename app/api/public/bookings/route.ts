@@ -1,16 +1,32 @@
 import { NextResponse } from 'next/server';
 import { getSupabase } from '../../../lib/supabase';
 
-export async function GET() {
+export async function GET(request: Request) {
   const supabase = getSupabase();
   if (!supabase) return NextResponse.json({ error: 'Supabase no configurado.' }, { status: 500 });
 
-  const { data: business } = await supabase
-    .from('businesses')
-    .select('id, name, email, phone, address, description, timezone, currency, cancellation_hours, booking_window_days')
-    .order('id', { ascending: true })
-    .limit(1)
-    .maybeSingle();
+  const { searchParams } = new URL(request.url);
+  const slug = searchParams.get('negocio') || searchParams.get('slug');
+
+  let business = null;
+  if (slug) {
+    const { data: b } = await supabase
+      .from('businesses')
+      .select('id, name, email, phone, address, description, timezone, currency, cancellation_hours, booking_window_days')
+      .eq('slug', slug)
+      .maybeSingle();
+    business = b;
+  }
+
+  if (!business) {
+    const { data: defaultBiz } = await supabase
+      .from('businesses')
+      .select('id, name, email, phone, address, description, timezone, currency, cancellation_hours, booking_window_days')
+      .order('id', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    business = defaultBiz;
+  }
 
   if (!business) return NextResponse.json({ error: 'Página no disponible.' }, { status: 404 });
 
@@ -41,12 +57,27 @@ export async function POST(request: Request) {
   if (!supabase) return NextResponse.json({ error: 'Supabase no configurado.' }, { status: 500 });
 
   const x = (await request.json()) as Record<string, unknown>;
-  const { data: business } = await supabase
-    .from('businesses')
-    .select('id, booking_window_days')
-    .order('id', { ascending: true })
-    .limit(1)
-    .maybeSingle();
+  const slug = (x.slug || x.negocio) as string | undefined;
+
+  let business = null;
+  if (slug) {
+    const { data: b } = await supabase
+      .from('businesses')
+      .select('id, booking_window_days')
+      .eq('slug', slug)
+      .maybeSingle();
+    business = b;
+  }
+
+  if (!business) {
+    const { data: defaultBiz } = await supabase
+      .from('businesses')
+      .select('id, booking_window_days')
+      .order('id', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    business = defaultBiz;
+  }
 
   if (!business) return NextResponse.json({ error: 'Página no disponible.' }, { status: 404 });
 
