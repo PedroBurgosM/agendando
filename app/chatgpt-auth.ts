@@ -54,26 +54,8 @@ export async function getChatGPTUser(): Promise<ChatGPTUser | null> {
     }
   }
 
-  // 2. Check OpenAI headers (ChatGPT Sites environment)
-  const userId = requestHeaders.get(USER_ID_HEADER);
-  const email = requestHeaders.get(USER_EMAIL_HEADER);
-  if (!userId || !email) {
-    return null;
-  }
-
-  const encodedFullName = requestHeaders.get(USER_FULL_NAME_HEADER);
-  const fullName =
-    encodedFullName &&
-    requestHeaders.get(USER_FULL_NAME_ENCODING_HEADER) === PERCENT_ENCODED_UTF8
-      ? safeDecodeURIComponent(encodedFullName)
-      : null;
-
-  return {
-    userId,
-    displayName: fullName ?? email,
-    email,
-    fullName,
-  };
+  // Solo se admiten sesiones con token criptográfico válido y verificado.
+  return null;
 }
 
 export async function requireChatGPTUser(
