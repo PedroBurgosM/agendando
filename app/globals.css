@@ -24,6 +24,9 @@ html, body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
+  overflow-x: hidden;
+  max-width: 100vw;
+  width: 100%;
 }
 body {
   font-family: var(--font-geist-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -34,7 +37,14 @@ button, input, select, textarea { font: inherit; }
 button { cursor: pointer; }
 
 /* Layout Base */
-.app-shell { min-height: 100vh; display: grid; grid-template-columns: 240px 1fr; background: #f4f4f5; }
+.app-shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  background: #f4f4f5;
+  max-width: 100vw;
+  overflow-x: hidden;
+}
 .sidebar {
   position: fixed; inset: 0 auto 0 0; width: 240px; padding: 27px 18px 20px;
   background: #ffffff; border-right: 1px solid var(--line); display: flex; flex-direction: column; z-index: 5;
@@ -308,8 +318,9 @@ nav { display: flex; flex-direction: column; gap: 5px; }
 
 .toast {
   position: fixed; right: 24px; bottom: 24px; background: #0f172a; color: #ffffff;
-  border: 1px solid #334155; padding: 14px 18px; border-radius: 11px; font-size: 13px; font-weight: 500;
-  box-shadow: 0 10px 30px rgba(0,0,0,0.15); z-index: 50; animation: toastin .2s ease-out;
+  border: 1px solid #334155; padding: 14px 20px; border-radius: 12px; font-size: 14px; font-weight: 600;
+  box-shadow: 0 16px 40px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.1); z-index: 99999; animation: toastin .2s ease-out;
+  pointer-events: none;
 }
 @keyframes toastin { from { transform: translateY(8px); opacity: 0; } }
 
@@ -425,8 +436,8 @@ nav { display: flex; flex-direction: column; gap: 5px; }
 
 /* Modales */
 .modal-backdrop {
-  position: fixed; inset: 0; background: rgba(15, 23, 42, 0.45); backdrop-filter: blur(4px); display: grid;
-  place-items: center; z-index: 40; padding: 18px;
+  position: fixed; inset: 0; background: rgba(15, 23, 42, 0.55); backdrop-filter: blur(4px); display: grid;
+  place-items: center; z-index: 1000; padding: 18px;
 }
 .booking-detail, .new-booking-modal {
   position: relative; width: min(620px, 100%); max-height: calc(100vh - 32px); overflow: auto;
@@ -597,7 +608,7 @@ nav { display: flex; flex-direction: column; gap: 5px; }
 
 /* Drawer Lateral Alumno */
 .client-drawer-backdrop {
-  position: fixed; inset: 0; background: rgba(15, 23, 42, 0.45); backdrop-filter: blur(3px); z-index: 35;
+  position: fixed; inset: 0; background: rgba(15, 23, 42, 0.45); backdrop-filter: blur(3px); z-index: 1000;
   display: flex; justify-content: flex-end;
 }
 .client-drawer {
@@ -1046,6 +1057,8 @@ nav { display: flex; flex-direction: column; gap: 5px; }
   .service-grid { grid-template-columns: 1fr 1fr; }
   .team-grid { grid-template-columns: 1fr 1fr; }
   .bookings-stats { grid-template-columns: repeat(3, 1fr); }
+  .client-stats { grid-template-columns: repeat(3, 1fr); }
+  .service-stats { grid-template-columns: repeat(2, 1fr); }
   .agenda-layout { grid-template-columns: 1fr; }
 }
 
@@ -1079,7 +1092,10 @@ nav { display: flex; flex-direction: column; gap: 5px; }
 
   .workspace {
     display: block;
-    padding-bottom: 74px; /* Space for mobile bottom nav bar */
+    width: 100%;
+    max-width: 100vw;
+    overflow-x: hidden;
+    padding-bottom: calc(74px + env(safe-area-inset-bottom, 0px)); /* Space for mobile bottom nav bar */
   }
 
   /* Topbar on mobile */
@@ -1170,12 +1186,15 @@ nav { display: flex; flex-direction: column; gap: 5px; }
     bottom: 0;
     left: 0;
     right: 0;
-    height: 60px;
+    height: calc(60px + env(safe-area-inset-bottom, 0px));
+    padding-bottom: env(safe-area-inset-bottom, 0px);
     background: rgba(255, 255, 255, 0.96);
     backdrop-filter: blur(14px);
     border-top: 1px solid var(--line);
     z-index: 45;
-    padding: 3px 4px;
+    padding-top: 3px;
+    padding-left: 4px;
+    padding-right: 4px;
     gap: 2px;
     box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.05);
   }
@@ -1210,7 +1229,10 @@ nav { display: flex; flex-direction: column; gap: 5px; }
 
   /* Page modules container padding */
   .content, .agenda-content, .clients-content, .services-content, .team-content, .settings-content, .bookings-content {
-    padding: 18px 14px 24px;
+    padding: 16px 12px 24px;
+    max-width: 100vw;
+    box-sizing: border-box;
+    overflow-x: hidden;
   }
   .welcome-row, .agenda-titlebar, .clients-titlebar, .services-titlebar, .team-titlebar, .bookings-titlebar {
     align-items: flex-start;
@@ -1273,6 +1295,39 @@ nav { display: flex; flex-direction: column; gap: 5px; }
     font-size: 11px;
   }
 
+  /* Service filter tabs on mobile */
+  .service-filter {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 10px !important;
+    margin: 16px 0 14px !important;
+  }
+  .service-filter > div {
+    display: flex !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
+    white-space: nowrap !important;
+    padding: 4px !important;
+    gap: 6px !important;
+    scrollbar-width: none;
+    max-width: 100% !important;
+  }
+  .service-filter > div::-webkit-scrollbar {
+    display: none;
+  }
+  .service-filter button {
+    flex-shrink: 0 !important;
+    font-size: 12px !important;
+    padding: 7px 11px !important;
+  }
+  .service-filter > small {
+    display: block !important;
+    width: 100% !important;
+    color: #64748b;
+    font-size: 12px !important;
+    line-height: 1.4 !important;
+  }
+
   /* Clients Toolbar */
   .clients-toolbar {
     flex-direction: column;
@@ -1280,6 +1335,14 @@ nav { display: flex; flex-direction: column; gap: 5px; }
   }
   .client-search {
     width: 100%;
+  }
+
+  /* Table horizontal scroll wrappers on mobile */
+  .clients-table-wrap, .bookings-table-wrap, .bookings-panel {
+    width: 100% !important;
+    max-width: 100% !important;
+    overflow-x: auto !important;
+    -webkit-overflow-scrolling: touch;
   }
 
   /* Grids */
@@ -1290,24 +1353,27 @@ nav { display: flex; flex-direction: column; gap: 5px; }
 }
 
 @media(max-width: 640px) {
-  /* Stats Cards */
-  .stats-grid, .client-stats {
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
+  /* Stats Cards - Always 2 columns on mobile for a clean grid */
+  .stats-grid, .client-stats, .service-stats, .team-stats, .bookings-stats {
+    grid-template-columns: 1fr 1fr !important;
+    gap: 8px !important;
   }
-  .bookings-stats {
-    grid-template-columns: 1fr 1fr;
-    gap: 8px;
+  .stat-card, .client-stats article, .service-stats article {
+    padding: 12px 14px !important;
+    gap: 10px !important;
   }
-  .service-stats, .team-stats {
-    grid-template-columns: 1fr 1fr;
-    gap: 8px;
+  .client-stats article > span, .service-stats article > span {
+    width: 34px !important;
+    height: 34px !important;
+    font-size: 15px !important;
+    border-radius: 9px !important;
+    flex-shrink: 0;
   }
-  .stat-card {
-    padding: 14px;
+  .client-stats strong, .service-stats strong, .stat-card strong {
+    font-size: 18px !important;
   }
-  .stat-card strong {
-    font-size: 20px;
+  .client-stats small, .service-stats small, .stat-card small {
+    font-size: 11px !important;
   }
 
   /* Calendar in Day View: full-width on mobile! */
@@ -1315,16 +1381,22 @@ nav { display: flex; flex-direction: column; gap: 5px; }
     min-width: 100% !important;
   }
 
-  /* Modals */
+  /* Modals - Bottom sheet presentation with high z-index above bottom nav */
   .modal-backdrop {
-    padding: 12px;
-    align-items: flex-end;
+    padding: 0 !important;
+    align-items: flex-end !important;
+    z-index: 1000 !important;
   }
   .booking-detail, .new-booking-modal {
-    padding: 22px 16px !important;
-    max-height: 92vh;
-    border-radius: 16px;
-    width: 100%;
+    padding: 22px 16px calc(24px + env(safe-area-inset-bottom, 0px)) !important;
+    max-height: 88vh !important;
+    border-radius: 20px 20px 0 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch;
+    box-shadow: 0 -10px 35px rgba(0, 0, 0, 0.2) !important;
   }
   .booking-detail h2, .new-booking-modal h2 {
     font-size: 20px;
@@ -1336,14 +1408,53 @@ nav { display: flex; flex-direction: column; gap: 5px; }
   .form-grid label.full {
     grid-column: 1;
   }
+
+  /* Contact & notification options in student modal */
+  .student-contact-grid {
+    grid-template-columns: 1fr !important;
+    gap: 10px !important;
+  }
+
+  /* Schedule time inputs in class modal */
+  .schedule-time-row {
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    gap: 10px !important;
+  }
+  .schedule-time-row .schedule-add-btn {
+    grid-column: 1 / -1 !important;
+    width: 100% !important;
+    height: 42px !important;
+    justify-content: center !important;
+    margin-top: 4px !important;
+  }
+
+  /* Modal Footer: Stacked, ergonomic thumb action on mobile */
   .modal-footer {
-    flex-direction: column-reverse;
-    gap: 8px;
+    display: flex !important;
+    flex-direction: column-reverse !important;
+    gap: 10px !important;
+    width: 100% !important;
+    margin-top: 20px !important;
+    padding-top: 14px !important;
+    border-top: 1px solid var(--line) !important;
   }
-  .modal-footer button {
-    width: 100%;
-    height: 44px;
+  .modal-footer > div {
+    display: flex !important;
+    flex-direction: column-reverse !important;
+    gap: 10px !important;
+    width: 100% !important;
   }
+  .modal-footer button, .modal-footer button[type=submit], .modal-footer .primary, .modal-footer .btn-danger-outline {
+    width: 100% !important;
+    height: 44px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    font-size: 14px !important;
+    border-radius: 10px !important;
+  }
+
   .detail-actions {
     grid-template-columns: 1fr;
     gap: 8px;
@@ -1361,7 +1472,8 @@ nav { display: flex; flex-direction: column; gap: 5px; }
   .client-drawer {
     width: 100% !important;
     max-width: 100% !important;
-    padding: 24px 16px;
+    padding: 24px 16px calc(24px + env(safe-area-inset-bottom, 0px)) !important;
+    z-index: 1000 !important;
   }
 
   /* Session Student Items in Modal */
@@ -1384,20 +1496,20 @@ nav { display: flex; flex-direction: column; gap: 5px; }
   .appointment > b {
     display: none;
   }
+
+  .toast {
+    right: 16px !important;
+    left: 16px !important;
+    bottom: calc(24px + env(safe-area-inset-bottom, 0px)) !important;
+    text-align: center !important;
+    z-index: 99999 !important;
+  }
 }
 
 @media(max-width: 440px) {
-  .stats-grid {
-    grid-template-columns: 1fr;
-  }
-  .bookings-stats {
-    grid-template-columns: 1fr;
-  }
-  .client-stats {
-    grid-template-columns: 1fr;
-  }
-  .service-stats, .team-stats {
-    grid-template-columns: 1fr;
+  /* Keep 2 columns on extra-small screens for stats cards */
+  .stats-grid, .client-stats, .service-stats, .team-stats, .bookings-stats {
+    grid-template-columns: 1fr 1fr !important;
   }
   .slots {
     grid-template-columns: repeat(2, 1fr);

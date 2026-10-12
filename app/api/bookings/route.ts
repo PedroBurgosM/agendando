@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getChatGPTUser } from '../../chatgpt-auth';
 import { getSupabase } from '../../lib/supabase';
-
+import { parseChileDateTime } from '../../lib/dates';
 import { getBusinessForUser } from '../../lib/tenant';
 
 async function requireApiUser() {
@@ -136,7 +136,7 @@ export async function POST(request: Request) {
 
   if (!professional) return NextResponse.json({ error: 'El instructor no existe o no está activo.' }, { status: 400 });
 
-  const start = new Date(`${date}T${time}:00-04:00`);
+  const start = parseChileDateTime(date, time);
   if (Number.isNaN(start.getTime())) return NextResponse.json({ error: 'Fecha u hora inválida.' }, { status: 400 });
   const startsAtIso = start.toISOString();
   const ends = new Date(start.getTime() + serviceRow.duration_minutes * 60 * 1000);
@@ -311,7 +311,12 @@ export async function PATCH(request: Request) {
   if (!business) return NextResponse.json({ error: 'Negocio no encontrado.' }, { status: 404 });
 
   const updatePayload: Record<string, unknown> = {};
-  if (status) updatePayload.status = status;
+  if (status) {
+    let normalizedStatus = status;
+    if (status === 'attended') normalizedStatus = 'completed';
+    else if (status === 'absent') normalizedStatus = 'no_show';
+    updatePayload.status = normalizedStatus;
+  }
   if (paymentStatus) updatePayload.payment_status = paymentStatus;
 
   if (date && time) {
@@ -324,7 +329,7 @@ export async function PATCH(request: Request) {
 
     if (!booking) return NextResponse.json({ error: 'Reserva no encontrada.' }, { status: 404 });
 
-    const start = new Date(`${date}T${time}:00-04:00`);
+    const start = parseChileDateTime(date, time);
     if (Number.isNaN(start.getTime())) return NextResponse.json({ error: 'Fecha u hora inválida.' }, { status: 400 });
     const duration = (booking.services as any)?.duration_minutes || 60;
     const ends = new Date(start.getTime() + duration * 60 * 1000);

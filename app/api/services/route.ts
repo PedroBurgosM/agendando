@@ -18,12 +18,22 @@ export async function GET(request: Request) {
   const b = await businessFor(supabase, user, request, true);
   if (!b) return NextResponse.json({ error: 'No se pudo preparar el negocio.' }, { status: 500 });
 
+  const { data: professionals } = await supabase
+    .from('professionals')
+    .select('id, name')
+    .eq('business_id', b.id);
+
+  const profMap = new Map<number, string>();
+  for (const p of (professionals || [])) {
+    profMap.set(p.id, p.name);
+  }
+
   const { data: services, error } = await supabase
     .from('services')
     .select(`
       id, name, description, mode, class_type, capacity, billing_period,
       duration_minutes, price_clp, deposit_percent, active, schedule,
-      bookings(id, payment_status, amount_clp, status)
+      bookings(id, payment_status, amount_clp, status, professional_id)
     `)
     .eq('business_id', b.id)
     .order('active', { ascending: false })
@@ -38,10 +48,21 @@ export async function GET(request: Request) {
     const paidTotal = activeBookings
       .filter((bk: any) => bk.payment_status === 'paid')
       .reduce((sum: number, bk: any) => sum + (bk.amount_clp || 0), 0);
+
+    const descStr = s.description || '';
+    const match = descStr.match(/<!--instructor:(\d+)-->/);
+    let instructorId: number | null = match ? Number(match[1]) : null;
+    if (!instructorId && activeBookings.length > 0) {
+      const lastBooking = activeBookings[activeBookings.length - 1];
+      if (lastBooking?.professional_id) instructorId = Number(lastBooking.professional_id);
+    }
+    const instructorName = instructorId ? (profMap.get(instructorId) || null) : null;
+    const cleanDescription = descStr.replace(/<!--instructor:\d+-->/g, '').trim() || null;
+
     return {
       id: s.id,
       name: s.name,
-      description: s.description,
+      description: cleanDescription,
       mode: s.mode,
       class_type: s.class_type,
       capacity: s.capacity,
@@ -51,6 +72,8 @@ export async function GET(request: Request) {
       deposit_percent: s.deposit_percent,
       active: s.active,
       schedule: s.schedule,
+      instructor_id: instructorId,
+      instructor_name: instructorName,
       booking_count: activeBookings.length,
       paid_total: paidTotal,
     };
@@ -61,7 +84,11 @@ export async function GET(request: Request) {
 
 function values(body: Record<string, unknown>) {
   const name = String(body.name ?? '').trim();
-  const description = String(body.description ?? '').trim();
+  const rawDesc = String(body.description ?? '').trim();
+  const professionalId = body.professionalId ? Number(body.professionalId) : (body.instructor_id ? Number(body.instructor_id) : null);
+  const userDesc = rawDesc.replace(/<!--instructor:\d+-->/g, '').trim();
+  const description = professionalId ? `<!--instructor:${professionalId}-->${userDesc}` : (userDesc || null);
+
   const mode = String(body.mode ?? 'presencial');
   const classType = String(body.classType ?? body.class_type ?? 'individual');
   const rawCapacity = Number(body.capacity ?? (classType === 'grupal' ? 10 : 1));

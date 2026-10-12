@@ -211,3 +211,20 @@ VALUES (
   TRUE
 )
 ON CONFLICT DO NOTHING;
+
+-- ==============================================================================
+-- 9. SEGURIDAD A NIVEL DE FILA (ROW LEVEL SECURITY / RLS)
+-- ==============================================================================
+-- Habilita RLS en todas las tablas para proteger la base de datos contra accesos
+-- externos no autorizados vía REST API pública. El backend de Agendando se comunica
+-- mediante la service_role key que omite RLS de forma segura.
+
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE businesses ENABLE ROW LEVEL SECURITY;
+ALTER TABLE professionals ENABLE ROW LEVEL SECURITY;
+ALTER TABLE services ENABLE ROW LEVEL SECURITY;
+ALTER TABLE customers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE bookings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE payments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE notifications ENABLE ROW LEVEL SECURITY;
+

@@ -9,6 +9,112 @@ const bookingDateKey = (seconds: number) => { const p = chileDateParts(new Date(
 const startOfWeek = (date: Date) => { const result = new Date(date); result.setHours(12, 0, 0, 0); result.setDate(result.getDate() - ((result.getDay() + 6) % 7)); return result; };
 const addDays = (date: Date, days: number) => { const result = new Date(date); result.setDate(result.getDate() + days); return result; };
 
+export interface ParsedSlot {
+  label: string;
+  date: string;
+  time: string;
+  dayName: string;
+}
+
+export function parseScheduleToSlots(scheduleStr: string | null | undefined, refDate = new Date()): ParsedSlot[] {
+  if (!scheduleStr || typeof scheduleStr !== 'string') return [];
+  const trimmed = scheduleStr.trim();
+  if (!trimmed) return [];
+
+  const dayMap: Record<string, number> = {
+    'lun': 1, 'lunes': 1,
+    'mar': 2, 'martes': 2,
+    'mié': 3, 'mie': 3, 'miércoles': 3, 'miercoles': 3,
+    'jue': 4, 'jueves': 4,
+    'vie': 5, 'viernes': 5,
+    'sáb': 6, 'sab': 6, 'sábado': 6, 'sabado': 6,
+    'dom': 7, 'domingo': 7, 'domingos': 7, 'sábados': 6, 'sabados': 6
+  };
+
+  const dayNamesShort: Record<number, string> = {
+    1: 'Lun', 2: 'Mar', 3: 'Mié', 4: 'Jue', 5: 'Vie', 6: 'Sáb', 7: 'Dom'
+  };
+
+  const parts = trimmed.split(/\s*\/\s*/);
+  const slots: ParsedSlot[] = [];
+
+  const refYear = refDate.getFullYear();
+  const refMonth = refDate.getMonth();
+  const refDay = refDate.getDate();
+  const refHours = refDate.getHours();
+  const refMinutes = refDate.getMinutes();
+
+  for (const part of parts) {
+    const timeMatch = part.match(/(\d{1,2}:\d{2})/);
+    const startTime = timeMatch ? timeMatch[1].padStart(5, '0') : '18:00';
+    const [startH, startM] = startTime.split(':').map(Number);
+
+    const norm = part
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '');
+
+    const targetDays = new Set<number>();
+
+    if (norm.includes('todos los dias')) {
+      [1, 2, 3, 4, 5, 6, 7].forEach(d => targetDays.add(d));
+    } else if (norm.includes('lunes a viernes') || norm.includes('lun a vie')) {
+      [1, 2, 3, 4, 5].forEach(d => targetDays.add(d));
+    } else if (norm.includes('sab y dom') || norm.includes('finde')) {
+      [6, 7].forEach(d => targetDays.add(d));
+    } else {
+      if (/\blun(es)?\b/.test(norm)) targetDays.add(1);
+      if (/\bmar(tes)?\b/.test(norm)) targetDays.add(2);
+      if (/\bmie(rcoles)?\b/.test(norm)) targetDays.add(3);
+      if (/\bjue(ves)?\b/.test(norm)) targetDays.add(4);
+      if (/\bvie(rnes)?\b/.test(norm)) targetDays.add(5);
+      if (/\bsab(ado|ados)?\b/.test(norm)) targetDays.add(6);
+      if (/\bdom(ingo|ingos)?\b/.test(norm)) targetDays.add(7);
+    }
+
+    if (targetDays.size === 0) {
+      // Fallback: If no explicit day matched, use today's or tomorrow's date
+      const d = new Date(refYear, refMonth, refDay);
+      if (refHours > startH || (refHours === startH && refMinutes >= startM)) {
+        d.setDate(d.getDate() + 1);
+      }
+      slots.push({
+        label: `${startTime} hrs`,
+        date: localDateKey(d),
+        time: startTime,
+        dayName: 'Próxima sesión'
+      });
+      continue;
+    }
+
+    const currentIsoDay = refDate.getDay() === 0 ? 7 : refDate.getDay();
+
+    for (const targetDay of Array.from(targetDays).sort()) {
+      let daysAhead = targetDay - currentIsoDay;
+      if (daysAhead < 0) {
+        daysAhead += 7;
+      } else if (daysAhead === 0) {
+        if (refHours > startH || (refHours === startH && refMinutes >= startM)) {
+          daysAhead = 7;
+        }
+      }
+
+      const slotDate = new Date(refYear, refMonth, refDay + daysAhead);
+      const dayLabel = dayNamesShort[targetDay] || '';
+      slots.push({
+        label: `${dayLabel} ${startTime}`,
+        date: localDateKey(slotDate),
+        time: startTime,
+        dayName: dayLabel
+      });
+    }
+  }
+
+  // Sort slots by calendar date ascending
+  slots.sort((a, b) => a.date.localeCompare(b.date));
+  return slots;
+}
+
 function SummaryDashboard({
   setActive,
   demo,
@@ -681,6 +787,7 @@ export default function Home() {
       { key: 'Resumen', label: 'Resumen', icon: '⌂' },
       { key: 'Agenda', label: 'Agenda', icon: '▦' },
       { key: 'Reservas', label: 'Reservas', icon: '◫' },
+      { key: 'Asistencia', label: 'Pasar Lista', icon: '📋' },
       { key: 'Alumnos', label: 'Alumnos', icon: '♙' },
       { key: 'Pagos', label: 'Pagos', icon: '💳' },
       { key: 'Servicios', label: 'Servicios', icon: '◇' },
@@ -701,7 +808,15 @@ export default function Home() {
 
   async function checkSession() {
     try {
-      const res = await fetch('/api/auth/me', { cache: 'no-store' });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2500);
+
+      const res = await fetch('/api/auth/me', {
+        cache: 'no-store',
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+
       if (res.ok) {
         const data = await res.json() as { authenticated: boolean; user: SessionUser };
         if (data.authenticated && data.user) {
@@ -739,7 +854,17 @@ export default function Home() {
   }
 
   useEffect(() => {
-    void checkSession();
+    // Fail-safe: Si la comprobación de sesión demora más de 3 segundos, desbloquear la vista de login
+    const safetyTimer = setTimeout(() => {
+      setAuthChecking(false);
+    }, 3000);
+
+    void checkSession().finally(() => {
+      clearTimeout(safetyTimer);
+      setAuthChecking(false);
+    });
+
+    return () => clearTimeout(safetyTimer);
   }, []);
 
   if (authChecking) {
@@ -752,7 +877,8 @@ export default function Home() {
         justifyContent: 'center',
         background: '#0f172a',
         color: '#f8fafc',
-        fontFamily: 'inherit'
+        fontFamily: 'inherit',
+        padding: '20px'
       }}>
         <div style={{
           width: 52,
@@ -767,6 +893,22 @@ export default function Home() {
           <img src="/logo-icon.png" alt="Agendando" style={{ width: 34, height: 34 }} />
         </div>
         <div style={{ fontSize: '14px', color: '#94a3b8' }}>Verificando sesión…</div>
+        <button
+          type="button"
+          onClick={() => setAuthChecking(false)}
+          style={{
+            marginTop: '20px',
+            background: 'rgba(255, 255, 255, 0.08)',
+            border: '1px solid rgba(255, 255, 255, 0.18)',
+            color: '#cbd5e1',
+            padding: '8px 16px',
+            borderRadius: '8px',
+            fontSize: '13px',
+            cursor: 'pointer'
+          }}
+        >
+          Ir a iniciar sesión
+        </button>
       </div>
     );
   }
@@ -977,6 +1119,8 @@ export default function Home() {
           <AgendaModule demo={demo} />
         ) : active === 'Reservas' ? (
           <BookingsModule demo={demo} />
+        ) : active === 'Asistencia' ? (
+          <AttendanceModule demo={demo} />
         ) : (active === 'Alumnos' || active === 'Clientes') ? (
           <ClientsModule demo={demo} />
         ) : (active === 'Pagos' || active === 'Cobranzas') ? (
@@ -1023,6 +1167,14 @@ export default function Home() {
             </button>
             <button
               type="button"
+              className={active === 'Asistencia' ? 'active' : ''}
+              onClick={() => setActive('Asistencia')}
+            >
+              <span className="nav-icon">📋</span>
+              <small>Lista</small>
+            </button>
+            <button
+              type="button"
               className={active === 'Reservas' ? 'active' : ''}
               onClick={() => setActive('Reservas')}
             >
@@ -1036,14 +1188,6 @@ export default function Home() {
             >
               <span className="nav-icon">♙</span>
               <small>Alumnos</small>
-            </button>
-            <button
-              type="button"
-              className={(active === 'Pagos' || active === 'Cobranzas') ? 'active' : ''}
-              onClick={() => setActive('Pagos')}
-            >
-              <span className="nav-icon">💳</span>
-              <small>Pagos</small>
             </button>
             <button
               type="button"
@@ -1131,6 +1275,11 @@ function AgendaModule({ demo }: { demo: (message: string) => void }) {
   const [agendaTeam, setAgendaTeam] = useState<TeamMember[]>([]);
   const [agendaStudents, setAgendaStudents] = useState<Customer[]>([]);
   const [selectedStudentId, setSelectedStudentId] = useState<string>('');
+  const [agendaBookingServiceId, setAgendaBookingServiceId] = useState<string>('');
+  const [agendaBookingProfessionalId, setAgendaBookingProfessionalId] = useState<string>('');
+  const [agendaBookingDate, setAgendaBookingDate] = useState<string>('');
+  const [agendaBookingTime, setAgendaBookingTime] = useState<string>('18:00');
+  const [agendaBookingSlots, setAgendaBookingSlots] = useState<ParsedSlot[]>([]);
 
   const weekStart = startOfWeek(focusDate);
   const days = view === 'Semana' ? Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)) : [focusDate];
@@ -1310,11 +1459,18 @@ function AgendaModule({ demo }: { demo: (message: string) => void }) {
     setSelectedSessionKey(null);
     setSelectedStudentId('');
     const p = chileDateParts(new Date(session.starts_at * 1000));
+    const dStr = localDateKey(new Date(session.starts_at * 1000));
+    const tStr = `${String(p.hour).padStart(2, '0')}:${String(p.minute).padStart(2, '0')}`;
+    setAgendaBookingServiceId(String(session.service_id));
+    setAgendaBookingProfessionalId(String(session.professional_id));
+    setAgendaBookingDate(dStr);
+    setAgendaBookingTime(tStr);
+    setAgendaBookingSlots([]);
     setPrefillSession({
       serviceId: String(session.service_id),
       professionalId: String(session.professional_id),
-      date: localDateKey(new Date(session.starts_at * 1000)),
-      time: `${String(p.hour).padStart(2, '0')}:${String(p.minute).padStart(2, '0')}`
+      date: dStr,
+      time: tStr
     });
     setShowNew(true);
   }
@@ -1329,7 +1485,13 @@ function AgendaModule({ demo }: { demo: (message: string) => void }) {
       const data = await response.json() as { error?: string; message?: string };
       if (!response.ok) throw new Error(data.error ?? 'No se pudo actualizar la asistencia.');
       await loadBookings();
-      demo(status === 'attended' ? '✓ Asistencia marcada como Presente' : status === 'absent' ? 'Ausencia registrada' : 'Estado actualizado');
+      demo(
+        status === 'completed' || status === 'attended'
+          ? '✓ Asistencia marcada como Presente'
+          : status === 'no_show' || status === 'absent'
+          ? '✕ Ausencia registrada'
+          : 'Estado actualizado'
+      );
     } catch (e) {
       demo(e instanceof Error ? e.message : 'Error al actualizar');
     }
@@ -1444,7 +1606,19 @@ function AgendaModule({ demo }: { demo: (message: string) => void }) {
           <p>Supervisa el aforo, cupos ocupados y asistencia de tus alumnos.</p>
         </div>
         <div className="agenda-actions">
-          <button className="primary" onClick={() => { setPrefillSession(null); setShowNew(true); }}>
+          <button
+            className="primary"
+            onClick={() => {
+              setPrefillSession(null);
+              setSelectedStudentId('');
+              setAgendaBookingServiceId('');
+              setAgendaBookingProfessionalId('');
+              setAgendaBookingDate(localDateKey(focusDate));
+              setAgendaBookingTime('10:00');
+              setAgendaBookingSlots([]);
+              setShowNew(true);
+            }}
+          >
             <span>＋</span> Agendar / Inscribir Alumno
           </button>
         </div>
@@ -1738,7 +1912,7 @@ function AgendaModule({ demo }: { demo: (message: string) => void }) {
                             fontSize: '11px',
                             cursor: 'pointer'
                           }}
-                          onClick={() => void updateAttendance(stu.booking_id, 'attended')}
+                          onClick={() => void updateAttendance(stu.booking_id, 'completed')}
                         >
                           ✓ Presente
                         </button>
@@ -1749,13 +1923,13 @@ function AgendaModule({ demo }: { demo: (message: string) => void }) {
                             padding: '6px 9px',
                             borderRadius: '7px',
                             border: '1px solid #fecaca',
-                            background: stu.status === 'absent' ? '#ef4444' : '#fef2f2',
-                            color: stu.status === 'absent' ? '#ffffff' : '#b91c1c',
+                            background: stu.status === 'no_show' || stu.status === 'absent' ? '#ef4444' : '#fef2f2',
+                            color: stu.status === 'no_show' || stu.status === 'absent' ? '#ffffff' : '#b91c1c',
                             fontWeight: 600,
                             fontSize: '11px',
                             cursor: 'pointer'
                           }}
-                          onClick={() => void updateAttendance(stu.booking_id, 'absent')}
+                          onClick={() => void updateAttendance(stu.booking_id, 'no_show')}
                         >
                           ✗ Ausente
                         </button>
@@ -1907,32 +2081,106 @@ function AgendaModule({ demo }: { demo: (message: string) => void }) {
               )}
 
               <label className="full">Clase / Disciplina
-                <select name="serviceId" required defaultValue={prefillSession?.serviceId ?? ''} key={`serv-${prefillSession?.serviceId}`}>
+                <select
+                  name="serviceId"
+                  required
+                  value={agendaBookingServiceId}
+                  onChange={(e) => {
+                    const sid = e.target.value;
+                    setAgendaBookingServiceId(sid);
+                    const chosen = agendaServices.find(s => String(s.id) === sid);
+                    const profId = chosen?.instructor_id
+                      ? String(chosen.instructor_id)
+                      : (agendaTeam.filter(m => Boolean(m.active))[0]?.id ? String(agendaTeam.filter(m => Boolean(m.active))[0].id) : (agendaTeam[0] ? String(agendaTeam[0].id) : ''));
+                    setAgendaBookingProfessionalId(profId);
+                    if (chosen?.schedule) {
+                      const slots = parseScheduleToSlots(chosen.schedule);
+                      setAgendaBookingSlots(slots);
+                      if (slots.length > 0) {
+                        setAgendaBookingDate(slots[0].date);
+                        setAgendaBookingTime(slots[0].time);
+                      } else {
+                        setAgendaBookingDate(localDateKey(new Date()));
+                        setAgendaBookingTime('18:00');
+                      }
+                    } else {
+                      setAgendaBookingSlots([]);
+                      setAgendaBookingDate(localDateKey(new Date()));
+                      setAgendaBookingTime('18:00');
+                    }
+                  }}
+                >
                   <option value="" disabled>Seleccionar clase</option>
                   {agendaServices.map(s => (
                     <option value={s.id} key={s.id}>
-                      {s.name} · {s.class_type === 'grupal' ? `👥 Grupal (Cupo max: ${s.capacity || 10})` : '👤 Individual'} {s.schedule ? `· 🕒 ${s.schedule}` : ''} · ${Number(s.price_clp).toLocaleString('es-CL')}
+                      {s.name} · {s.class_type === 'grupal' ? `👥 Grupal (Cupo max: ${s.capacity || 10})` : '👤 Individual'} {s.instructor_name ? `· 👤 ${s.instructor_name}` : ''} {s.schedule ? `· 🕒 ${s.schedule}` : ''} · ${Number(s.price_clp).toLocaleString('es-CL')}
                     </option>
                   ))}
                 </select>
               </label>
 
-              <label>Instructor
-                <select name="professionalId" required defaultValue={prefillSession?.professionalId ?? ''} key={`prof-${prefillSession?.professionalId}`}>
-                  <option value="" disabled>Seleccionar instructor</option>
-                  {agendaTeam.map(m => (
-                    <option value={m.id} key={m.id}>{m.name} · {m.role}</option>
-                  ))}
-                </select>
-              </label>
+              <input type="hidden" name="professionalId" value={agendaBookingProfessionalId} />
+              <input type="hidden" name="date" value={agendaBookingDate} />
+              <input type="hidden" name="time" value={agendaBookingTime} />
 
-              <label>Fecha
-                <input name="date" type="date" min={localDateKey(new Date())} defaultValue={prefillSession?.date ?? localDateKey(focusDate)} key={`date-${prefillSession?.date}`} required />
-              </label>
-
-              <label>Hora de inicio
-                <input name="time" type="time" min="07:00" max="22:00" step="900" defaultValue={prefillSession?.time ?? '10:00'} key={`time-${prefillSession?.time}`} required />
-              </label>
+              {agendaBookingServiceId && (() => {
+                const chosen = agendaServices.find(s => String(s.id) === String(agendaBookingServiceId));
+                const instructor = agendaTeam.find(m => String(m.id) === String(agendaBookingProfessionalId));
+                const instructorName = instructor?.name || chosen?.instructor_name || 'Instructor asignado';
+                return (
+                  <div className="full" style={{ background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '10px', padding: '12px 14px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', marginBottom: agendaBookingSlots.length > 1 ? '10px' : '0' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontSize: '13px', fontWeight: 600, color: '#1e293b' }}>
+                          👤 Instructor: <strong>{instructorName}</strong>
+                        </span>
+                      </div>
+                      <div style={{ background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', fontWeight: 700 }}>
+                        📅 {agendaBookingDate} · 🕒 {agendaBookingTime} hrs
+                      </div>
+                    </div>
+                    {agendaBookingSlots.length > 1 && (
+                      <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '8px', marginTop: '4px' }}>
+                        <span style={{ fontSize: '11px', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'block', marginBottom: '6px' }}>
+                          Días asignados a esta clase (haz clic para cambiar fecha):
+                        </span>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                          {agendaBookingSlots.map((slot, idx) => {
+                            const isSelected = agendaBookingDate === slot.date && agendaBookingTime === slot.time;
+                            return (
+                              <button
+                                key={idx}
+                                type="button"
+                                onClick={() => {
+                                  setAgendaBookingDate(slot.date);
+                                  setAgendaBookingTime(slot.time);
+                                }}
+                                style={{
+                                  background: isSelected ? '#18181b' : '#ffffff',
+                                  color: isSelected ? '#ffffff' : '#334155',
+                                  border: isSelected ? '1px solid #18181b' : '1px solid #cbd5e1',
+                                  padding: '4px 10px',
+                                  borderRadius: '6px',
+                                  fontSize: '12px',
+                                  fontWeight: 600,
+                                  cursor: 'pointer',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                  transition: 'all 0.15s ease'
+                                }}
+                              >
+                                <span>{isSelected ? '✓' : '•'}</span>
+                                <span>{slot.label} ({slot.date.slice(5)})</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               <label className="full">Notas de la sesión
                 <textarea name="notes" rows={2} placeholder="Objetivos para la clase, material requerido o recordatorios (opcional)" />
@@ -1960,7 +2208,7 @@ type BookingRow = {
   customer_id: number;
   starts_at: number;
   ends_at: number;
-  status: 'confirmed' | 'completed' | 'cancelled' | 'no_show' | 'attended';
+  status: 'confirmed' | 'completed' | 'cancelled' | 'no_show' | 'attended' | 'absent';
   payment_status: 'paid' | 'unpaid' | 'partial' | 'refunded';
   amount_clp: number;
   customer_name: string;
@@ -1992,6 +2240,11 @@ function BookingsModule({ demo }: { demo: (message: string) => void }) {
 
   const [showNew, setShowNew] = useState(false);
   const [selectedStudentId, setSelectedStudentId] = useState('');
+  const [bookingServiceId, setBookingServiceId] = useState('');
+  const [bookingProfessionalId, setBookingProfessionalId] = useState('');
+  const [bookingDate, setBookingDate] = useState('');
+  const [bookingTime, setBookingTime] = useState('18:00');
+  const [bookingSlots, setBookingSlots] = useState<ParsedSlot[]>([]);
   const [rescheduling, setRescheduling] = useState<BookingRow | null>(null);
   const [confirmCancel, setConfirmCancel] = useState<BookingRow | null>(null);
   const [reminderModal, setReminderModal] = useState<{
@@ -2300,6 +2553,12 @@ function BookingsModule({ demo }: { demo: (message: string) => void }) {
           onClick={() => {
             setShowNew(true);
             setFormError('');
+            setSelectedStudentId('');
+            setBookingServiceId('');
+            setBookingProfessionalId('');
+            setBookingDate(todayKey);
+            setBookingTime('18:00');
+            setBookingSlots([]);
           }}
         >
           <span>＋</span> Nueva Reserva / Inscribir Alumno
@@ -2649,34 +2908,106 @@ function BookingsModule({ demo }: { demo: (message: string) => void }) {
               )}
 
               <label className="full">Clase / Disciplina
-                <select name="serviceId" required defaultValue="">
+                <select
+                  name="serviceId"
+                  required
+                  value={bookingServiceId}
+                  onChange={(e) => {
+                    const sid = e.target.value;
+                    setBookingServiceId(sid);
+                    const chosen = services.find(s => String(s.id) === sid);
+                    const profId = chosen?.instructor_id
+                      ? String(chosen.instructor_id)
+                      : (team.filter(m => Boolean(m.active))[0]?.id ? String(team.filter(m => Boolean(m.active))[0].id) : (team[0] ? String(team[0].id) : ''));
+                    setBookingProfessionalId(profId);
+                    if (chosen?.schedule) {
+                      const slots = parseScheduleToSlots(chosen.schedule);
+                      setBookingSlots(slots);
+                      if (slots.length > 0) {
+                        setBookingDate(slots[0].date);
+                        setBookingTime(slots[0].time);
+                      } else {
+                        setBookingDate(todayKey);
+                        setBookingTime('18:00');
+                      }
+                    } else {
+                      setBookingSlots([]);
+                      setBookingDate(todayKey);
+                      setBookingTime('18:00');
+                    }
+                  }}
+                >
                   <option value="" disabled>Seleccionar clase</option>
                   {services.filter(s => Boolean(s.active)).map((s) => (
                     <option value={s.id} key={s.id}>
-                      {s.name} · {s.class_type === 'grupal' ? `👥 Grupal (Cupo max: ${s.capacity || 10})` : '👤 Individual'} {s.schedule ? `· 🕒 ${s.schedule}` : ''} · ${Number(s.price_clp).toLocaleString('es-CL')}
+                      {s.name} · {s.class_type === 'grupal' ? `👥 Grupal (Cupo max: ${s.capacity || 10})` : '👤 Individual'} {s.instructor_name ? `· 👤 ${s.instructor_name}` : ''} {s.schedule ? `· 🕒 ${s.schedule}` : ''} · ${Number(s.price_clp).toLocaleString('es-CL')}
                     </option>
                   ))}
                 </select>
               </label>
 
-              <label>Instructor
-                <select name="professionalId" required defaultValue="">
-                  <option value="" disabled>Seleccionar instructor</option>
-                  {team.filter(m => Boolean(m.active)).map((m) => (
-                    <option value={m.id} key={m.id}>
-                      {m.name} · {m.role}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <input type="hidden" name="professionalId" value={bookingProfessionalId} />
+              <input type="hidden" name="date" value={bookingDate} />
+              <input type="hidden" name="time" value={bookingTime} />
 
-              <label>Fecha
-                <input name="date" type="date" min={todayKey} defaultValue={todayKey} required />
-              </label>
-
-              <label>Hora de inicio
-                <input name="time" type="time" min="07:00" max="21:00" step="900" defaultValue="18:00" required />
-              </label>
+              {bookingServiceId && (() => {
+                const chosen = services.find(s => String(s.id) === String(bookingServiceId));
+                const instructor = team.find(m => String(m.id) === String(bookingProfessionalId));
+                const instructorName = instructor?.name || chosen?.instructor_name || 'Instructor asignado';
+                return (
+                  <div className="full" style={{ background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '10px', padding: '12px 14px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', marginBottom: bookingSlots.length > 1 ? '10px' : '0' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontSize: '13px', fontWeight: 600, color: '#1e293b' }}>
+                          👤 Instructor: <strong>{instructorName}</strong>
+                        </span>
+                      </div>
+                      <div style={{ background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', fontWeight: 700 }}>
+                        📅 {bookingDate} · 🕒 {bookingTime} hrs
+                      </div>
+                    </div>
+                    {bookingSlots.length > 1 && (
+                      <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '8px', marginTop: '4px' }}>
+                        <span style={{ fontSize: '11px', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'block', marginBottom: '6px' }}>
+                          Días asignados a esta clase (haz clic para cambiar fecha):
+                        </span>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                          {bookingSlots.map((slot, idx) => {
+                            const isSelected = bookingDate === slot.date && bookingTime === slot.time;
+                            return (
+                              <button
+                                key={idx}
+                                type="button"
+                                onClick={() => {
+                                  setBookingDate(slot.date);
+                                  setBookingTime(slot.time);
+                                }}
+                                style={{
+                                  background: isSelected ? '#18181b' : '#ffffff',
+                                  color: isSelected ? '#ffffff' : '#334155',
+                                  border: isSelected ? '1px solid #18181b' : '1px solid #cbd5e1',
+                                  padding: '4px 10px',
+                                  borderRadius: '6px',
+                                  fontSize: '12px',
+                                  fontWeight: 600,
+                                  cursor: 'pointer',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: '4px',
+                                  transition: 'all 0.15s ease'
+                                }}
+                              >
+                                <span>{isSelected ? '✓' : '•'}</span>
+                                <span>{slot.label} ({slot.date.slice(5)})</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
 
               <label className="full">Notas de la sesión
                 <textarea name="notes" rows={2} placeholder="Observaciones o indicaciones especiales (opcional)" />
@@ -3032,6 +3363,1005 @@ function BookingsModule({ demo }: { demo: (message: string) => void }) {
 }
 
 
+function AttendanceModule({ demo }: { demo: (message: string) => void }) {
+  const [bookings, setBookings] = useState<BookingRow[]>([]);
+  const [services, setServices] = useState<Service[]>([]);
+  const [team, setTeam] = useState<TeamMember[]>([]);
+  const [students, setStudents] = useState<Customer[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Filtros
+  const [selectedInstructorId, setSelectedInstructorId] = useState<string>('all');
+  const [selectedDate, setSelectedDate] = useState<string>(() => bookingDateKey(Math.floor(Date.now() / 1000)));
+  const [selectedSessionKey, setSelectedSessionKey] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // Modal para inscribir alumno a la clase en vivo
+  const [showEnrollModal, setShowEnrollModal] = useState(false);
+  const [selectedStudentToEnroll, setSelectedStudentToEnroll] = useState('');
+  const [savingEnroll, setSavingEnroll] = useState(false);
+  const [enrollError, setEnrollError] = useState('');
+
+  async function loadData(showToast = false) {
+    try {
+      if (showToast) setRefreshing(true);
+      const [bookRes, servRes, teamRes, custRes] = await Promise.all([
+        fetch('/api/bookings?includeCancelled=0', { cache: 'no-store' }),
+        fetch('/api/services', { cache: 'no-store' }),
+        fetch('/api/team', { cache: 'no-store' }),
+        fetch('/api/customers', { cache: 'no-store' }),
+      ]);
+      if (bookRes.ok) {
+        const d = (await bookRes.json()) as { bookings: BookingRow[] };
+        setBookings(d.bookings || []);
+      }
+      if (servRes.ok) {
+        const d = (await servRes.json()) as { services: Service[] };
+        setServices(d.services || []);
+      }
+      if (teamRes.ok) {
+        const d = (await teamRes.json()) as { team: TeamMember[] };
+        setTeam(d.team || []);
+      }
+      if (custRes.ok) {
+        const d = (await custRes.json()) as { customers: Customer[] };
+        setStudents(d.customers || []);
+      }
+      if (showToast) demo('Lista actualizada.');
+    } catch {
+      demo('Error al cargar datos de asistencia.');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }
+
+  useEffect(() => {
+    void loadData();
+  }, []);
+
+  // Agrupar reservas del día y del instructor en sesiones de clase
+  const sessions = useMemo(() => {
+    const map = new Map<string, {
+      key: string;
+      serviceId: number;
+      serviceName: string;
+      professionalId: number;
+      professionalName: string;
+      professionalColor?: string;
+      startsAt: number;
+      endsAt: number;
+      dateKey: string;
+      timeStr: string;
+      durationMinutes: number;
+      capacity: number;
+      classType: string;
+      students: {
+        bookingId: number;
+        customerId: number;
+        customerName: string;
+        customerEmail: string | null;
+        customerPhone: string | null;
+        planName: string | null;
+        membershipStatus: string | null;
+        paymentStatus: string | null;
+        status: string;
+      }[];
+    }>();
+
+    for (const b of bookings) {
+      if (b.status === 'cancelled') continue;
+      const dKey = bookingDateKey(b.starts_at);
+      if (dKey !== selectedDate) continue;
+
+      if (selectedInstructorId !== 'all' && String(b.professional_id) !== selectedInstructorId) {
+        continue;
+      }
+
+      const p = chileDateParts(new Date(b.starts_at * 1000));
+      const timeStr = `${String(p.hour).padStart(2, '0')}:${String(p.minute).padStart(2, '0')}`;
+      const key = `${b.service_id}_${b.starts_at}_${b.professional_id}`;
+
+      if (!map.has(key)) {
+        const duration = Math.max(30, Math.round((b.ends_at - b.starts_at) / 60));
+        map.set(key, {
+          key,
+          serviceId: b.service_id,
+          serviceName: b.service_name,
+          professionalId: b.professional_id,
+          professionalName: b.professional_name,
+          professionalColor: b.professional_color,
+          startsAt: b.starts_at,
+          endsAt: b.ends_at,
+          dateKey: dKey,
+          timeStr,
+          durationMinutes: duration,
+          capacity: b.capacity || 10,
+          classType: b.class_type || 'individual',
+          students: []
+        });
+      }
+
+      map.get(key)!.students.push({
+        bookingId: b.id,
+        customerId: b.customer_id,
+        customerName: b.customer_name,
+        customerEmail: b.customer_email,
+        customerPhone: b.customer_phone,
+        planName: b.plan_name,
+        membershipStatus: b.membership_status,
+        paymentStatus: b.payment_status,
+        status: b.status || 'confirmed'
+      });
+    }
+
+    const list = Array.from(map.values());
+    list.sort((a, b) => a.startsAt - b.startsAt);
+    return list;
+  }, [bookings, selectedDate, selectedInstructorId]);
+
+  useEffect(() => {
+    if (sessions.length > 0) {
+      if (!selectedSessionKey || !sessions.some(s => s.key === selectedSessionKey)) {
+        setSelectedSessionKey(sessions[0].key);
+      }
+    } else {
+      setSelectedSessionKey(null);
+    }
+  }, [sessions, selectedSessionKey]);
+
+  const activeSession = useMemo(() => {
+    return sessions.find(s => s.key === selectedSessionKey) || null;
+  }, [sessions, selectedSessionKey]);
+
+  const stats = useMemo(() => {
+    if (!activeSession) return { total: 0, attended: 0, absent: 0, pending: 0, percent: 0 };
+    const total = activeSession.students.length;
+    const attended = activeSession.students.filter(s => s.status === 'completed' || s.status === 'attended').length;
+    const absent = activeSession.students.filter(s => s.status === 'no_show' || s.status === 'absent').length;
+    const pending = activeSession.students.filter(s => s.status !== 'completed' && s.status !== 'attended' && s.status !== 'no_show' && s.status !== 'absent').length;
+    const percent = total > 0 ? Math.round((attended / total) * 100) : 0;
+    return { total, attended, absent, pending, percent };
+  }, [activeSession]);
+
+  async function updateStudentAttendance(bookingId: number, status: 'completed' | 'no_show' | 'confirmed', studentName: string) {
+    setBookings(prev => prev.map(b => b.id === bookingId ? { ...b, status } : b));
+    try {
+      const res = await fetch('/api/bookings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: bookingId, status })
+      });
+      if (!res.ok) {
+        const d = await res.json() as { error?: string };
+        throw new Error(d.error ?? 'Error al actualizar');
+      }
+      demo(status === 'completed' ? `✓ ${studentName}: Presente` : status === 'no_show' ? `✕ ${studentName}: Ausente` : `• ${studentName}: Pendiente`);
+    } catch (e) {
+      demo(e instanceof Error ? e.message : 'Error al guardar');
+      void loadData();
+    }
+  }
+
+  async function markAllPresent() {
+    if (!activeSession) return;
+    const toUpdate = activeSession.students.filter(s => s.status !== 'completed' && s.status !== 'attended');
+    if (toUpdate.length === 0) {
+      demo('Todos los alumnos ya están marcados como presentes.');
+      return;
+    }
+    setBookings(prev => prev.map(b => {
+      if (toUpdate.some(u => u.bookingId === b.id)) {
+        return { ...b, status: 'completed' };
+      }
+      return b;
+    }));
+    demo(`Marcando ${toUpdate.length} alumnos como presentes…`);
+    try {
+      await Promise.all(toUpdate.map(u =>
+        fetch('/api/bookings', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: u.bookingId, status: 'completed' })
+        })
+      ));
+      demo('✓ Toda la clase marcada como presente.');
+      await loadData();
+    } catch {
+      demo('Error al actualizar lista.');
+      await loadData();
+    }
+  }
+
+  async function resetListToPending() {
+    if (!activeSession) return;
+    if (!confirm('¿Restablecer la asistencia de toda la clase a pendiente?')) return;
+    setBookings(prev => prev.map(b => {
+      if (activeSession.students.some(u => u.bookingId === b.id)) {
+        return { ...b, status: 'confirmed' };
+      }
+      return b;
+    }));
+    try {
+      await Promise.all(activeSession.students.map(u =>
+        fetch('/api/bookings', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: u.bookingId, status: 'confirmed' })
+        })
+      ));
+      demo('Lista restablecida.');
+      await loadData();
+    } catch {
+      demo('Error al restablecer.');
+      await loadData();
+    }
+  }
+
+  function handleNotifyAbsent(student: { customerName: string; customerPhone?: string | null }) {
+    if (!student.customerPhone) {
+      demo(`El alumno ${student.customerName} no tiene teléfono registrado.`);
+      return;
+    }
+    let p = student.customerPhone.replace(/[^\d]/g, '');
+    if (p.length === 9 && p.startsWith('9')) p = '56' + p;
+    const msg = `Hola ${student.customerName}, te extrañamos hoy en la clase de ${activeSession?.serviceName || 'la clase'} (${activeSession?.timeStr || ''} hrs). Esperamos que todo esté bien, ¡te esperamos en tu próxima sesión!`;
+    window.open(`https://wa.me/${p}?text=${encodeURIComponent(msg)}`, '_blank');
+  }
+
+  function handleDateStep(days: number) {
+    const [y, m, d] = selectedDate.split('-').map(Number);
+    const current = new Date(y, m - 1, d);
+    current.setDate(current.getDate() + days);
+    const yr = current.getFullYear();
+    const mo = String(current.getMonth() + 1).padStart(2, '0');
+    const da = String(current.getDate()).padStart(2, '0');
+    setSelectedDate(`${yr}-${mo}-${da}`);
+  }
+
+  async function handleQuickEnroll(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!activeSession) return;
+    setSavingEnroll(true);
+    setEnrollError('');
+    const form = new FormData(e.currentTarget);
+    const payload = Object.fromEntries(form.entries());
+    payload.serviceId = String(activeSession.serviceId);
+    payload.professionalId = String(activeSession.professionalId);
+    payload.date = activeSession.dateKey;
+    payload.time = activeSession.timeStr;
+
+    if (selectedStudentToEnroll && selectedStudentToEnroll !== 'new') {
+      const s = students.find(x => String(x.id) === selectedStudentToEnroll);
+      if (s) {
+        payload.customerId = String(s.id);
+        payload.customerName = s.name;
+        payload.customerEmail = s.email;
+        payload.customerPhone = s.phone || '';
+      }
+    }
+
+    try {
+      const res = await fetch('/api/bookings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json() as { error?: string; message?: string };
+      if (!res.ok) throw new Error(data.error ?? 'No se pudo inscribir.');
+      await loadData();
+      setShowEnrollModal(false);
+      setSelectedStudentToEnroll('');
+      demo('✓ Alumno sumado a la lista.');
+    } catch (err) {
+      setEnrollError(err instanceof Error ? err.message : 'Error al inscribir.');
+    } finally {
+      setSavingEnroll(false);
+    }
+  }
+
+  const filteredStudents = useMemo(() => {
+    if (!activeSession) return [];
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return activeSession.students;
+    return activeSession.students.filter(s =>
+      s.customerName.toLowerCase().includes(q) ||
+      (s.customerPhone || '').includes(q) ||
+      (s.planName || '').toLowerCase().includes(q)
+    );
+  }, [activeSession, searchQuery]);
+
+  function initials(name: string) {
+    return name.split(/\s+/).slice(0, 2).map(x => x[0]).join('').toUpperCase();
+  }
+
+  const todayChileKey = useMemo(() => bookingDateKey(Math.floor(Date.now() / 1000)), []);
+  const isToday = selectedDate === todayChileKey;
+
+  const formattedDateTitle = useMemo(() => {
+    try {
+      const d = new Date(`${selectedDate}T12:00:00`);
+      return new Intl.DateTimeFormat('es-CL', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(d);
+    } catch {
+      return selectedDate;
+    }
+  }, [selectedDate]);
+
+  return (
+    <div className="bookings-content attendance-content" style={{ maxWidth: '1200px', margin: '0 auto' }}>
+      {/* Barra de título y filtros principales */}
+      <div className="bookings-titlebar" style={{ flexWrap: 'wrap', gap: '16px' }}>
+        <div>
+          <p className="eyebrow">CONTROL DE ASISTENCIA Y PASAR LISTA</p>
+          <h1>Pasar Lista</h1>
+          <p>Selecciona tu clase del día para registrar la asistencia de los alumnos en tiempo real.</p>
+        </div>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className="secondary"
+            onClick={() => void loadData(true)}
+            disabled={refreshing}
+            style={{
+              padding: '8px 14px',
+              borderRadius: '8px',
+              border: '1px solid #cbd5e1',
+              background: '#ffffff',
+              fontSize: '13px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}
+          >
+            <span>🔄</span> {refreshing ? 'Actualizando…' : 'Refrescar'}
+          </button>
+        </div>
+      </div>
+
+      {/* Selector de Instructor y Navegador de Fecha */}
+      <section style={{
+        background: '#ffffff',
+        border: '1px solid #e2e8f0',
+        borderRadius: '12px',
+        padding: '16px 20px',
+        marginBottom: '20px',
+        boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+        display: 'flex',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: '14px'
+      }}>
+        {/* Selector de Instructor */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: '1 1 280px' }}>
+          <label style={{ fontSize: '13px', fontWeight: 700, color: '#334155', display: 'flex', alignItems: 'center', gap: '6px', margin: 0 }}>
+            <span>👤</span> Instructor:
+          </label>
+          <select
+            value={selectedInstructorId}
+            onChange={e => setSelectedInstructorId(e.target.value)}
+            style={{
+              flex: 1,
+              height: '40px',
+              borderRadius: '8px',
+              border: '1px solid #cbd5e1',
+              padding: '0 12px',
+              fontSize: '14px',
+              fontWeight: 600,
+              color: '#0f172a',
+              background: '#f8fafc'
+            }}
+          >
+            <option value="all">Todos los instructores</option>
+            {team.map(m => (
+              <option key={m.id} value={m.id}>{m.name} · {m.role}</option>
+            ))}
+          </select>
+        </div>
+
+        {/* Navegador de Fecha */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            onClick={() => handleDateStep(-1)}
+            title="Día anterior"
+            style={{
+              height: '38px',
+              padding: '0 12px',
+              borderRadius: '8px',
+              border: '1px solid #cbd5e1',
+              background: '#ffffff',
+              fontSize: '13px',
+              fontWeight: 600,
+              cursor: 'pointer'
+            }}
+          >
+            ◀ Ayer
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setSelectedDate(todayChileKey)}
+            style={{
+              height: '38px',
+              padding: '0 14px',
+              borderRadius: '8px',
+              border: isToday ? '1px solid #2563eb' : '1px solid #cbd5e1',
+              background: isToday ? '#eff6ff' : '#ffffff',
+              color: isToday ? '#1d4ed8' : '#334155',
+              fontSize: '13px',
+              fontWeight: 700,
+              cursor: 'pointer'
+            }}
+          >
+            📅 Hoy
+          </button>
+
+          <input
+            type="date"
+            value={selectedDate}
+            onChange={e => setSelectedDate(e.target.value)}
+            style={{
+              height: '38px',
+              borderRadius: '8px',
+              border: '1px solid #cbd5e1',
+              padding: '0 10px',
+              fontSize: '13px',
+              fontWeight: 600,
+              color: '#0f172a',
+              background: '#ffffff'
+            }}
+          />
+
+          <button
+            type="button"
+            onClick={() => handleDateStep(1)}
+            title="Día siguiente"
+            style={{
+              height: '38px',
+              padding: '0 12px',
+              borderRadius: '8px',
+              border: '1px solid #cbd5e1',
+              background: '#ffffff',
+              fontSize: '13px',
+              fontWeight: 600,
+              cursor: 'pointer'
+            }}
+          >
+            Mañana ▶
+          </button>
+        </div>
+      </section>
+
+      {/* Selector de Clases / Sesiones del Día */}
+      <section style={{ marginBottom: '24px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+          <h2 style={{ fontSize: '15px', fontWeight: 700, color: '#1e293b', margin: 0, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+            Clases de {formattedDateTitle}:
+          </h2>
+          <span style={{ fontSize: '12px', color: '#64748b', fontWeight: 600 }}>
+            {sessions.length} {sessions.length === 1 ? 'clase programada' : 'clases programadas'}
+          </span>
+        </div>
+
+        {sessions.length === 0 ? (
+          <div style={{
+            background: '#ffffff',
+            border: '1px dashed #cbd5e1',
+            borderRadius: '12px',
+            padding: '36px 20px',
+            textAlign: 'center',
+            color: '#64748b'
+          }}>
+            <span style={{ fontSize: '32px', display: 'block', marginBottom: '8px' }}>📅</span>
+            <strong style={{ fontSize: '16px', color: '#1e293b', display: 'block' }}>
+              No hay clases con alumnos inscritos para este día
+            </strong>
+            <p style={{ margin: '6px 0 16px', fontSize: '13px' }}>
+              Puedes cambiar la fecha arriba o pulsar &quot;Hoy&quot; para revisar la lista de asistencia del día.
+            </p>
+            <button
+              type="button"
+              onClick={() => setSelectedDate(localDateKey(new Date()))}
+              style={{
+                background: '#18181b',
+                color: '#ffffff',
+                border: 'none',
+                padding: '8px 16px',
+                borderRadius: '8px',
+                fontSize: '13px',
+                fontWeight: 600,
+                cursor: 'pointer'
+              }}
+            >
+              Ir a las clases de Hoy
+            </button>
+          </div>
+        ) : (
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+            gap: '12px'
+          }}>
+            {sessions.map(s => {
+              const isSelected = selectedSessionKey === s.key;
+              const attendedCount = s.students.filter(st => st.status === 'completed' || st.status === 'attended').length;
+              const totalCount = s.students.length;
+              const isFullAttended = totalCount > 0 && attendedCount === totalCount;
+
+              return (
+                <div
+                  key={s.key}
+                  onClick={() => setSelectedSessionKey(s.key)}
+                  style={{
+                    background: isSelected ? '#eff6ff' : '#ffffff',
+                    border: isSelected ? '2px solid #2563eb' : '1px solid #e2e8f0',
+                    borderRadius: '12px',
+                    padding: '14px 16px',
+                    cursor: 'pointer',
+                    transition: 'all 0.15s ease',
+                    boxShadow: isSelected ? '0 4px 12px rgba(37,99,235,0.12)' : '0 1px 3px rgba(0,0,0,0.03)',
+                    position: 'relative'
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
+                    <span style={{
+                      background: isSelected ? '#2563eb' : '#18181b',
+                      color: '#ffffff',
+                      fontSize: '12px',
+                      fontWeight: 700,
+                      padding: '3px 8px',
+                      borderRadius: '6px',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '4px'
+                    }}>
+                      🕒 {s.timeStr} hrs
+                    </span>
+                    <span style={{
+                      fontSize: '11px',
+                      fontWeight: 700,
+                      padding: '2px 8px',
+                      borderRadius: '12px',
+                      background: isFullAttended ? '#dcfce7' : attendedCount > 0 ? '#fef3c7' : '#f1f5f9',
+                      color: isFullAttended ? '#15803d' : attendedCount > 0 ? '#b45309' : '#475569'
+                    }}>
+                      {attendedCount > 0 ? `✓ ${attendedCount}/${totalCount} presentes` : '• Sin pasar lista'}
+                    </span>
+                  </div>
+
+                  <strong style={{ fontSize: '15px', color: '#0f172a', display: 'block', marginBottom: '4px' }}>
+                    {s.serviceName}
+                  </strong>
+
+                  <div style={{ fontSize: '12px', color: '#475569', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>👤 {s.professionalName}</span>
+                    <span style={{ fontWeight: 600 }}>👥 {totalCount} {totalCount === 1 ? 'alumno' : 'alumnos'}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      {/* Detalle y Pase de Lista de la Sesión Activa */}
+      {activeSession && (
+        <section style={{
+          background: '#ffffff',
+          border: '1px solid #e2e8f0',
+          borderRadius: '14px',
+          overflow: 'hidden',
+          boxShadow: '0 2px 6px rgba(0,0,0,0.04)'
+        }}>
+          {/* Header de la Sesión */}
+          <div style={{
+            background: '#f8fafc',
+            borderBottom: '1px solid #e2e8f0',
+            padding: '20px',
+            display: 'flex',
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '16px'
+          }}>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                <span style={{
+                  background: '#2563eb',
+                  color: '#ffffff',
+                  fontSize: '13px',
+                  fontWeight: 700,
+                  padding: '3px 10px',
+                  borderRadius: '6px'
+                }}>
+                  🕒 {activeSession.timeStr} hrs ({activeSession.durationMinutes} min)
+                </span>
+                <span style={{
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  color: '#475569',
+                  background: '#e2e8f0',
+                  padding: '3px 8px',
+                  borderRadius: '6px'
+                }}>
+                  {activeSession.classType === 'grupal' ? `👥 Grupal (Capacidad: ${activeSession.capacity})` : '👤 Individual'}
+                </span>
+              </div>
+              <h2 style={{ fontSize: '20px', fontWeight: 800, color: '#0f172a', margin: '0 0 4px' }}>
+                {activeSession.serviceName}
+              </h2>
+              <p style={{ margin: 0, fontSize: '13px', color: '#475569' }}>
+                Instructor a cargo: <strong>{activeSession.professionalName}</strong> · Fecha: {formattedDateTitle}
+              </p>
+            </div>
+
+            {/* Acciones Rápidas */}
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={markAllPresent}
+                disabled={activeSession.students.length === 0}
+                style={{
+                  background: '#16a34a',
+                  color: '#ffffff',
+                  border: 'none',
+                  padding: '10px 16px',
+                  borderRadius: '8px',
+                  fontSize: '13px',
+                  fontWeight: 700,
+                  cursor: activeSession.students.length === 0 ? 'not-allowed' : 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  boxShadow: '0 1px 3px rgba(22,163,74,0.3)'
+                }}
+              >
+                <span>✓</span> Marcar Todos Presentes
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowEnrollModal(true);
+                  setSelectedStudentToEnroll('');
+                  setEnrollError('');
+                }}
+                style={{
+                  background: '#18181b',
+                  color: '#ffffff',
+                  border: 'none',
+                  padding: '10px 16px',
+                  borderRadius: '8px',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}
+              >
+                <span>＋</span> Sumar Alumno
+              </button>
+
+              <button
+                type="button"
+                onClick={resetListToPending}
+                title="Reiniciar estados de asistencia a pendiente"
+                style={{
+                  background: '#ffffff',
+                  color: '#64748b',
+                  border: '1px solid #cbd5e1',
+                  padding: '10px 14px',
+                  borderRadius: '8px',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  cursor: 'pointer'
+                }}
+              >
+                Restablecer
+              </button>
+            </div>
+          </div>
+
+          {/* Barra de Estadísticas de Asistencia en vivo */}
+          <div style={{
+            background: '#ffffff',
+            borderBottom: '1px solid #f1f5f9',
+            padding: '14px 20px',
+            display: 'flex',
+            flexWrap: 'wrap',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '12px'
+          }}>
+            <div style={{ display: 'flex', gap: '16px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '13px', color: '#334155' }}>
+                Total Inscritos: <strong style={{ fontSize: '15px' }}>{stats.total}</strong>
+              </span>
+              <span style={{ fontSize: '13px', color: '#16a34a', fontWeight: 600 }}>
+                🟢 Presentes: <strong style={{ fontSize: '15px' }}>{stats.attended}</strong> ({stats.percent}%)
+              </span>
+              <span style={{ fontSize: '13px', color: '#dc2626', fontWeight: 600 }}>
+                🔴 Ausentes: <strong style={{ fontSize: '15px' }}>{stats.absent}</strong>
+              </span>
+              <span style={{ fontSize: '13px', color: '#64748b' }}>
+                ⚪ Pendientes: <strong style={{ fontSize: '15px' }}>{stats.pending}</strong>
+              </span>
+            </div>
+
+            {/* Buscador de Alumno dentro de la clase */}
+            <div style={{ minWidth: '220px' }}>
+              <input
+                type="text"
+                placeholder="🔍 Buscar en la lista…"
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                style={{
+                  width: '100%',
+                  height: '36px',
+                  borderRadius: '8px',
+                  border: '1px solid #cbd5e1',
+                  padding: '0 10px',
+                  fontSize: '13px'
+                }}
+              />
+            </div>
+          </div>
+
+          {/* Lista de Alumnos de la Clase */}
+          <div style={{ padding: '16px 20px' }}>
+            {filteredStudents.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '40px 20px', color: '#64748b' }}>
+                <span style={{ fontSize: '28px', display: 'block', marginBottom: '6px' }}>👥</span>
+                <strong>{searchQuery ? 'No hay alumnos que coincidan con la búsqueda.' : 'No hay alumnos anotados en esta clase.'}</strong>
+                <p style={{ margin: '6px 0 14px', fontSize: '13px' }}>
+                  Puedes presionar &quot;＋ Sumar Alumno&quot; para registrar la llegada de un alumno en este momento.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setShowEnrollModal(true)}
+                  style={{
+                    background: '#18181b',
+                    color: '#ffffff',
+                    border: 'none',
+                    padding: '8px 16px',
+                    borderRadius: '8px',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    cursor: 'pointer'
+                  }}
+                >
+                  ＋ Inscribir Alumno a esta clase
+                </button>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {filteredStudents.map((st, idx) => {
+                  const isAttended = st.status === 'completed' || st.status === 'attended';
+                  const isAbsent = st.status === 'no_show' || st.status === 'absent';
+                  const isPending = !isAttended && !isAbsent;
+
+                  return (
+                    <div
+                      key={st.bookingId}
+                      style={{
+                        background: isAttended ? '#f0fdf4' : isAbsent ? '#fef2f2' : '#ffffff',
+                        border: isAttended ? '1px solid #bbf7d0' : isAbsent ? '1px solid #fecaca' : '1px solid #e2e8f0',
+                        borderRadius: '10px',
+                        padding: '12px 16px',
+                        display: 'flex',
+                        flexWrap: 'wrap',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: '12px',
+                        transition: 'all 0.15s ease'
+                      }}
+                    >
+                      {/* Datos del Alumno */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: '220px' }}>
+                        <span style={{
+                          width: '38px',
+                          height: '38px',
+                          borderRadius: '50%',
+                          background: isAttended ? '#16a34a' : isAbsent ? '#dc2626' : '#64748b',
+                          color: '#ffffff',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontWeight: 700,
+                          fontSize: '13px',
+                          flexShrink: 0
+                        }}>
+                          {initials(st.customerName)}
+                        </span>
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <strong style={{ fontSize: '15px', color: '#0f172a' }}>
+                              {idx + 1}. {st.customerName}
+                            </strong>
+                            <span style={{
+                              fontSize: '11px',
+                              padding: '2px 6px',
+                              borderRadius: '4px',
+                              fontWeight: 600,
+                              background: st.membershipStatus === 'active' ? '#dcfce7' : '#fee2e2',
+                              color: st.membershipStatus === 'active' ? '#15803d' : '#b91c1c'
+                            }}>
+                              {st.membershipStatus === 'active' ? '🟢 Al día' : '🔴 Cuota pendiente'}
+                            </span>
+                          </div>
+                          <small style={{ color: '#64748b', display: 'block', marginTop: '2px' }}>
+                            {st.planName || 'Plan Regular'} {st.customerPhone ? `· 📞 ${st.customerPhone}` : ''}
+                          </small>
+                        </div>
+                      </div>
+
+                      {/* Botones Grandes de Asistencia (Touch-Friendly para celular) */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                        {/* Botón Presente */}
+                        <button
+                          type="button"
+                          onClick={() => void updateStudentAttendance(st.bookingId, 'completed', st.customerName)}
+                          style={{
+                            height: '40px',
+                            padding: '0 16px',
+                            borderRadius: '8px',
+                            border: isAttended ? '2px solid #16a34a' : '1px solid #cbd5e1',
+                            background: isAttended ? '#16a34a' : '#ffffff',
+                            color: isAttended ? '#ffffff' : '#15803d',
+                            fontSize: '13px',
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            boxShadow: isAttended ? '0 2px 6px rgba(22,163,74,0.3)' : 'none',
+                            transition: 'all 0.15s ease'
+                          }}
+                        >
+                          <span>✓</span> Presente
+                        </button>
+
+                        {/* Botón Ausente */}
+                        <button
+                          type="button"
+                          onClick={() => void updateStudentAttendance(st.bookingId, 'no_show', st.customerName)}
+                          style={{
+                            height: '40px',
+                            padding: '0 16px',
+                            borderRadius: '8px',
+                            border: isAbsent ? '2px solid #dc2626' : '1px solid #cbd5e1',
+                            background: isAbsent ? '#dc2626' : '#ffffff',
+                            color: isAbsent ? '#ffffff' : '#b91c1c',
+                            fontSize: '13px',
+                            fontWeight: 700,
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            boxShadow: isAbsent ? '0 2px 6px rgba(220,38,38,0.3)' : 'none',
+                            transition: 'all 0.15s ease'
+                          }}
+                        >
+                          <span>✕</span> Ausente
+                        </button>
+
+                        {/* Botón Pendiente */}
+                        <button
+                          type="button"
+                          onClick={() => void updateStudentAttendance(st.bookingId, 'confirmed', st.customerName)}
+                          title="Volver a estado pendiente"
+                          style={{
+                            height: '40px',
+                            padding: '0 12px',
+                            borderRadius: '8px',
+                            border: isPending ? '2px solid #64748b' : '1px solid #e2e8f0',
+                            background: isPending ? '#64748b' : '#f8fafc',
+                            color: isPending ? '#ffffff' : '#64748b',
+                            fontSize: '12px',
+                            fontWeight: 600,
+                            cursor: 'pointer'
+                          }}
+                        >
+                          Pendiente
+                        </button>
+
+                        {/* Notificación de WhatsApp al alumno */}
+                        {st.customerPhone && (
+                          <button
+                            type="button"
+                            onClick={() => handleNotifyAbsent(st)}
+                            title={`Enviar mensaje de WhatsApp a ${st.customerName}`}
+                            style={{
+                              height: '40px',
+                              padding: '0 10px',
+                              borderRadius: '8px',
+                              border: '1px solid #86efac',
+                              background: '#f0fdf4',
+                              color: '#16a34a',
+                              fontSize: '12px',
+                              fontWeight: 600,
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px'
+                            }}
+                          >
+                            <span>📲</span> WA
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+
+      {/* Modal: Inscribir Alumno a la Clase en Vivo */}
+      {showEnrollModal && activeSession && (
+        <div className="modal-backdrop">
+          <form className="new-booking-modal" onSubmit={handleQuickEnroll} style={{ maxWidth: '520px' }}>
+            <button type="button" className="close-modal" onClick={() => setShowEnrollModal(false)}>×</button>
+            <p className="eyebrow">INSCRIBIR ALUMNO</p>
+            <h2>Sumar Alumno a esta Clase</h2>
+            <p>
+              Clase: <strong>{activeSession.serviceName}</strong> · Horario: <strong>{activeSession.timeStr} hrs</strong>
+            </p>
+
+            <div className="form-grid">
+              <label className="full">Seleccionar Alumno
+                <select
+                  value={selectedStudentToEnroll}
+                  onChange={e => setSelectedStudentToEnroll(e.target.value)}
+                  required
+                >
+                  <option value="">-- Elige un alumno registrado --</option>
+                  {students.map(s => (
+                    <option key={s.id} value={s.id}>
+                      {s.name} · {s.plan_name || 'Regular'} ({s.phone || 'Sin teléfono'})
+                    </option>
+                  ))}
+                  <option value="new">+ Escribir datos de alumno nuevo</option>
+                </select>
+              </label>
+
+              {selectedStudentToEnroll === 'new' && (
+                <>
+                  <label className="full">Nombre completo
+                    <input name="customerName" required placeholder="Ej: Marcela Soto" />
+                  </label>
+                  <label>Teléfono (WhatsApp)
+                    <input name="customerPhone" type="tel" placeholder="+56 9 1234 5678" />
+                  </label>
+                  <label>Correo electrónico
+                    <input name="customerEmail" type="email" placeholder="alumno@correo.cl" />
+                  </label>
+                </>
+              )}
+            </div>
+
+            {enrollError && <div className="form-error" role="alert">{enrollError}</div>}
+            <div className="modal-footer">
+              <button type="button" onClick={() => setShowEnrollModal(false)}>Cancelar</button>
+              <button type="submit" disabled={savingEnroll}>
+                {savingEnroll ? 'Inscribiendo…' : 'Confirmar e Inscribir'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
 type Customer = {
   id: number;
   name: string;
@@ -3114,7 +4444,7 @@ function ClientsModule({ demo }: { demo: (message: string) => void }) {
     if (services.length > 0) {
       const first = services[0];
       setSelectedServiceId(String(first.id));
-      setPlanNameInput(`Plan ${first.name}`);
+      setPlanNameInput(first.name);
       setMonthlyFeeInput(first.price_clp);
     } else {
       setSelectedServiceId('custom');
@@ -3133,22 +4463,22 @@ function ClientsModule({ demo }: { demo: (message: string) => void }) {
     } else {
       setSelectedServiceId(c.plan_name ? 'custom' : (services[0] ? String(services[0].id) : 'custom'));
     }
-    setPlanNameInput(c.plan_name ?? 'Mensualidad Regular');
-    setMonthlyFeeInput(c.monthly_fee ?? 45000);
+    setPlanNameInput(c.plan_name ?? (services[0]?.name || 'Mensualidad Regular'));
+    setMonthlyFeeInput(c.monthly_fee ?? (services[0]?.price_clp || 45000));
     setShowNew(true);
   }
 
   function handleServiceChange(serviceIdVal: string) {
     setSelectedServiceId(serviceIdVal);
     if (serviceIdVal === 'custom') {
-      if (!planNameInput || planNameInput.startsWith('Plan ')) {
-        setPlanNameInput('Plan Personalizado');
+      if (!planNameInput) {
+        setPlanNameInput('Tarifa Personalizada');
       }
       return;
     }
     const s = services.find(serv => String(serv.id) === serviceIdVal);
     if (s) {
-      setPlanNameInput(`Plan ${s.name}`);
+      setPlanNameInput(s.name);
       setMonthlyFeeInput(s.price_clp);
     }
   }
@@ -3256,8 +4586,16 @@ function ClientsModule({ demo }: { demo: (message: string) => void }) {
     const form = new FormData(event.currentTarget);
     const payload = Object.fromEntries(form.entries());
     payload.notifyWhatsapp = form.get('notifyWhatsapp') ? 'true' : 'false';
-    payload.notifyEmail = form.get('notifyEmail') ? 'true' : 'false';
     if (editing) payload.id = String(editing.id);
+
+    const s = services.find(serv => String(serv.id) === selectedServiceId);
+    if (s) {
+      payload.planName = s.name;
+      payload.monthlyFee = String(s.price_clp);
+    } else {
+      if (!payload.planName) payload.planName = planNameInput || 'Mensualidad Regular';
+      if (!payload.monthlyFee) payload.monthlyFee = String(monthlyFeeInput || 45000);
+    }
 
     try {
       const response = await fetch('/api/customers', {
@@ -3346,7 +4684,7 @@ function ClientsModule({ demo }: { demo: (message: string) => void }) {
         </button>
       </div>
 
-      <div className="client-stats" style={{ gridTemplateColumns: 'repeat(6, 1fr)' }}>
+      <div className="client-stats">
         <article><span className="purple">♙</span><div><small>Total Alumnos</small><strong>{stats.total}</strong></div></article>
         <article><span className="mint">✓</span><div><small>Al día</small><strong style={{ color: '#1c7a5f' }}>{stats.active}</strong></div></article>
         <article><span className="gold">◷</span><div><small>Por vencer</small><strong style={{ color: '#a06c13' }}>{stats.pending}</strong></div></article>
@@ -3820,7 +5158,7 @@ function ClientsModule({ demo }: { demo: (message: string) => void }) {
                   <small style={{ color: '#64748b', fontSize: '11px' }}>Canales de contacto y notificación</small>
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
+                <div className="student-contact-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
                   <label style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '13px', fontWeight: 600, color: '#334155' }}>
                     Correo electrónico
                     <input
@@ -3844,7 +5182,7 @@ function ClientsModule({ demo }: { demo: (message: string) => void }) {
                   </label>
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
+                <div className="student-contact-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px' }}>
                   <label
                     style={{
                       display: 'flex',
@@ -3930,28 +5268,37 @@ function ClientsModule({ demo }: { demo: (message: string) => void }) {
                   )}
                 </select>
               </label>
-              <label>Plan de mensualidad
-                <input
-                  name="planName"
-                  value={planNameInput}
-                  onChange={e => setPlanNameInput(e.target.value)}
-                  placeholder="Ej: Plan Karate, Pase Libre"
-                  required
-                />
-              </label>
-              <label>Valor mensual (CLP)
-                <input
-                  name="monthlyFee"
-                  type="number"
-                  min="0"
-                  step="1000"
-                  value={monthlyFeeInput}
-                  onChange={e => setMonthlyFeeInput(e.target.value)}
-                  placeholder="45000"
-                  required
-                />
-              </label>
-              <label>Día de vencimiento (1 al 31)
+              {selectedServiceId === 'custom' ? (
+                <>
+                  <label>Nombre de la tarifa / plan
+                    <input
+                      name="planName"
+                      value={planNameInput}
+                      onChange={e => setPlanNameInput(e.target.value)}
+                      placeholder="Ej: Tarifa personalizada, Beca parcial"
+                      required
+                    />
+                  </label>
+                  <label>Valor mensual (CLP)
+                    <input
+                      name="monthlyFee"
+                      type="number"
+                      min="0"
+                      step="1000"
+                      value={monthlyFeeInput}
+                      onChange={e => setMonthlyFeeInput(e.target.value)}
+                      placeholder="45000"
+                      required
+                    />
+                  </label>
+                </>
+              ) : (
+                <>
+                  <input type="hidden" name="planName" value={planNameInput} />
+                  <input type="hidden" name="monthlyFee" value={monthlyFeeInput} />
+                </>
+              )}
+              <label className={editing ? '' : 'full'}>Día de vencimiento (1 al 31)
                 <input name="paymentDueDay" type="number" min="1" max="31" defaultValue={editing?.payment_due_day ?? 5} placeholder="5" />
               </label>
               {editing && (
@@ -4599,7 +5946,7 @@ function PaymentsModule({ demo }: { demo: (message: string) => void }) {
       </div>
 
       {/* Tarjetas de Estadísticas Financieras */}
-      <div className="service-stats" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
+      <div className="service-stats">
         <article>
           <span className="coral">🔴</span>
           <div>
@@ -5818,6 +7165,8 @@ type Service = {
   capacity: number;
   billing_period?: 'mensual' | 'anual' | 'sesion';
   schedule?: string | null;
+  instructor_id?: number | null;
+  instructor_name?: string | null;
   duration_minutes: number;
   price_clp: number;
   deposit_percent: number;
@@ -5828,6 +7177,7 @@ type Service = {
 
 function ServicesModule({ demo }: { demo: (message: string) => void }) {
   const [services, setServices] = useState<Service[]>([]);
+  const [team, setTeam] = useState<TeamMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Service | null>(null);
@@ -5836,6 +7186,7 @@ function ServicesModule({ demo }: { demo: (message: string) => void }) {
   const [filter, setFilter] = useState<'todos' | 'mensuales' | 'anuales' | 'grupales' | 'individuales' | 'pausadas'>('todos');
   const [formClassType, setFormClassType] = useState<'individual' | 'grupal'>('grupal');
   const [formBillingPeriod, setFormBillingPeriod] = useState<'mensual' | 'anual' | 'sesion'>('mensual');
+  const [formProfessionalId, setFormProfessionalId] = useState<string>('');
   const DAYS_OF_WEEK = [
     { key: 'Lun', label: 'Lunes' },
     { key: 'Mar', label: 'Martes' },
@@ -5860,6 +7211,61 @@ function ServicesModule({ demo }: { demo: (message: string) => void }) {
   const [selectedDays, setSelectedDays] = useState<string[]>(['Lun', 'Mié', 'Vie']);
   const [slotStart, setSlotStart] = useState('18:30');
   const [slotEnd, setSlotEnd] = useState('19:30');
+  const [editingSlotIndex, setEditingSlotIndex] = useState<number | null>(0);
+
+  function parseSlotStringToComponents(slotStr: string): { days: string[]; start: string; end: string } {
+    const result = {
+      days: [] as string[],
+      start: '18:30',
+      end: '19:30',
+    };
+    if (!slotStr) return result;
+
+    const timeRangeMatch = slotStr.match(/(\d{1,2}:\d{2})\s*(?:-|a|al|hasta)?\s*(\d{1,2}:\d{2})?/i);
+    if (timeRangeMatch) {
+      if (timeRangeMatch[1]) {
+        const parts = timeRangeMatch[1].split(':');
+        result.start = `${parts[0].padStart(2, '0')}:${parts[1]}`;
+      }
+      if (timeRangeMatch[2]) {
+        const parts = timeRangeMatch[2].split(':');
+        result.end = `${parts[0].padStart(2, '0')}:${parts[1]}`;
+      } else {
+        const [h, m] = result.start.split(':').map(Number);
+        const endH = (h + 1) % 24;
+        result.end = `${String(endH).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+      }
+    }
+
+    const lower = slotStr.toLowerCase();
+    if (lower.includes('todos los d') || lower.includes('todos los dias')) {
+      result.days = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+      return result;
+    }
+    if (lower.includes('lunes a viernes') || lower.includes('lun a vie')) {
+      result.days = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie'];
+      return result;
+    }
+    if (lower.includes('fines de semana') || lower.includes('fin de semana') || lower.includes('sáb y dom') || lower.includes('sab y dom')) {
+      result.days = ['Sáb', 'Dom'];
+      return result;
+    }
+
+    const detectedDays: string[] = [];
+    if (lower.match(/\blun(?:es)?\b/)) detectedDays.push('Lun');
+    if (lower.match(/\bmar(?:tes)?\b/)) detectedDays.push('Mar');
+    if (lower.match(/\bmi[eé](?:rcoles)?\b/)) detectedDays.push('Mié');
+    if (lower.match(/\bjue(?:ves)?\b/)) detectedDays.push('Jue');
+    if (lower.match(/\bvie(?:rnes)?\b/)) detectedDays.push('Vie');
+    if (lower.match(/\bs[aá]b(?:ado|ados)?\b/)) detectedDays.push('Sáb');
+    if (lower.match(/\bdom(?:ingo|ingos)?\b/)) detectedDays.push('Dom');
+
+    if (detectedDays.length > 0) {
+      result.days = detectedDays;
+    }
+
+    return result;
+  }
 
   function formatDaysSummary(days: string[]): string {
     if (days.length === 0) return '';
@@ -5889,14 +7295,38 @@ function ServicesModule({ demo }: { demo: (message: string) => void }) {
     return `${sorted.slice(0, -1).join(', ')} y ${sorted[sorted.length - 1]}`;
   }
 
+  function syncSlotWithSelection(nextDays: string[], nextStart: string, nextEnd: string, targetIdx: number | null = null) {
+    if (nextDays.length === 0) return;
+    const daysText = formatDaysSummary(nextDays);
+    const updatedSlot = `${daysText} ${nextStart} - ${nextEnd}`;
+
+    if (targetIdx !== null && targetIdx >= 0 && targetIdx < scheduleSlots.length) {
+      const nextSlots = [...scheduleSlots];
+      nextSlots[targetIdx] = updatedSlot;
+      setScheduleSlots(nextSlots);
+      setFormSchedule(nextSlots.join(' / '));
+    } else if (scheduleSlots.length <= 1) {
+      setScheduleSlots([updatedSlot]);
+      setFormSchedule(updatedSlot);
+    }
+  }
+
   function addCurrentSlot() {
     if (selectedDays.length === 0) return;
     const daysText = formatDaysSummary(selectedDays);
     const newSlot = `${daysText} ${slotStart} - ${slotEnd}`;
-    if (!scheduleSlots.includes(newSlot)) {
-      const nextSlots = [...scheduleSlots, newSlot];
+    if (editingSlotIndex !== null && editingSlotIndex >= 0 && editingSlotIndex < scheduleSlots.length) {
+      const nextSlots = [...scheduleSlots];
+      nextSlots[editingSlotIndex] = newSlot;
       setScheduleSlots(nextSlots);
       setFormSchedule(nextSlots.join(' / '));
+      setEditingSlotIndex(null);
+    } else {
+      if (!scheduleSlots.includes(newSlot)) {
+        const nextSlots = [...scheduleSlots, newSlot];
+        setScheduleSlots(nextSlots);
+        setFormSchedule(nextSlots.join(' / '));
+      }
     }
   }
 
@@ -5904,14 +7334,30 @@ function ServicesModule({ demo }: { demo: (message: string) => void }) {
     const nextSlots = scheduleSlots.filter((_, i) => i !== index);
     setScheduleSlots(nextSlots);
     setFormSchedule(nextSlots.join(' / '));
+    if (editingSlotIndex === index) setEditingSlotIndex(null);
   }
 
   function toggleDay(dayKey: string) {
-    if (selectedDays.includes(dayKey)) {
-      setSelectedDays(selectedDays.filter(d => d !== dayKey));
-    } else {
-      setSelectedDays([...selectedDays, dayKey]);
-    }
+    const nextDays = selectedDays.includes(dayKey)
+      ? selectedDays.filter(d => d !== dayKey)
+      : [...selectedDays, dayKey];
+    setSelectedDays(nextDays);
+    syncSlotWithSelection(nextDays, slotStart, slotEnd, editingSlotIndex);
+  }
+
+  function handleSelectGroup(days: string[]) {
+    setSelectedDays(days);
+    syncSlotWithSelection(days, slotStart, slotEnd, editingSlotIndex);
+  }
+
+  function handleStartChange(newStart: string) {
+    setSlotStart(newStart);
+    syncSlotWithSelection(selectedDays, newStart, slotEnd, editingSlotIndex);
+  }
+
+  function handleEndChange(newEnd: string) {
+    setSlotEnd(newEnd);
+    syncSlotWithSelection(selectedDays, slotStart, newEnd, editingSlotIndex);
   }
 
   function addPreset(presetText: string) {
@@ -5920,17 +7366,24 @@ function ServicesModule({ demo }: { demo: (message: string) => void }) {
       setScheduleSlots(nextSlots);
       setFormSchedule(nextSlots.join(' / '));
     }
+    const comp = parseSlotStringToComponents(presetText);
+    if (comp.days.length > 0) setSelectedDays(comp.days);
+    if (comp.start) setSlotStart(comp.start);
+    if (comp.end) setSlotEnd(comp.end);
+    setEditingSlotIndex(null);
   }
 
   function openNewService() {
     setEditing(null);
-    setFormClassType('grupal');
-    setFormBillingPeriod('mensual');
-    setFormSchedule('');
-    setScheduleSlots([]);
+    const defaultProf = team.filter(m => Boolean(m.active))[0]?.id ? String(team.filter(m => Boolean(m.active))[0].id) : (team[0] ? String(team[0].id) : '');
+    setFormProfessionalId(defaultProf);
+    const defaultSlot = 'Lun, Mié y Vie 18:30 - 19:30';
+    setFormSchedule(defaultSlot);
+    setScheduleSlots([defaultSlot]);
     setSelectedDays(['Lun', 'Mié', 'Vie']);
     setSlotStart('18:30');
     setSlotEnd('19:30');
+    setEditingSlotIndex(0);
     setShowForm(true);
     setError('');
   }
@@ -5939,13 +7392,28 @@ function ServicesModule({ demo }: { demo: (message: string) => void }) {
     setEditing(s);
     setFormClassType(s.class_type || 'grupal');
     setFormBillingPeriod(s.billing_period || 'mensual');
+    const foundByName = team.find(m => m.name.toLowerCase() === (s.instructor_name || '').toLowerCase());
+    const profId = s.instructor_id ? String(s.instructor_id) : (foundByName ? String(foundByName.id) : '');
+    setFormProfessionalId(profId);
     const rawSched = s.schedule || '';
     setFormSchedule(rawSched);
     const parsed = rawSched ? rawSched.split(' / ').map(x => x.trim()).filter(Boolean) : [];
     setScheduleSlots(parsed);
-    setSelectedDays(['Lun', 'Mié', 'Vie']);
-    setSlotStart('18:30');
-    setSlotEnd('19:30');
+    setEditingSlotIndex(parsed.length > 0 ? 0 : null);
+
+    const slotToParse = parsed.length > 0 ? parsed[0] : rawSched;
+    if (slotToParse) {
+      const comp = parseSlotStringToComponents(slotToParse);
+      if (comp.days.length > 0) setSelectedDays(comp.days);
+      else setSelectedDays(['Lun', 'Mié', 'Vie']);
+      if (comp.start) setSlotStart(comp.start);
+      if (comp.end) setSlotEnd(comp.end);
+    } else {
+      setSelectedDays(['Lun', 'Mié', 'Vie']);
+      setSlotStart('18:30');
+      setSlotEnd('19:30');
+    }
+
     setShowForm(true);
     setError('');
   }
@@ -5957,10 +7425,18 @@ function ServicesModule({ demo }: { demo: (message: string) => void }) {
 
   async function loadServices() {
     try {
-      const response = await fetch('/api/services', { cache: 'no-store' });
-      if (!response.ok) throw new Error('No fue posible cargar las clases.');
-      const data = await response.json() as { services: Service[] };
-      setServices(data.services);
+      const [servRes, teamRes] = await Promise.all([
+        fetch('/api/services', { cache: 'no-store' }),
+        fetch('/api/team', { cache: 'no-store' })
+      ]);
+      if (servRes.ok) {
+        const data = await servRes.json() as { services: Service[] };
+        setServices(data.services || []);
+      }
+      if (teamRes.ok) {
+        const data = await teamRes.json() as { team: TeamMember[] };
+        setTeam(data.team?.filter(m => Boolean(m.active)) || []);
+      }
     } catch (e) {
       demo(e instanceof Error ? e.message : 'No fue posible cargar las clases.');
     } finally {
@@ -5990,8 +7466,21 @@ function ServicesModule({ demo }: { demo: (message: string) => void }) {
     event.preventDefault();
     setSaving(true);
     setError('');
-    const payload = Object.fromEntries(new FormData(event.currentTarget).entries());
+    const form = new FormData(event.currentTarget);
+    const payload: Record<string, unknown> = Object.fromEntries(form.entries());
     if (editing) payload.id = String(editing.id);
+
+    // Si el usuario configuró días y horas pero no presionó "Agregar a este horario" ni escribió texto manual,
+    // o si formSchedule está definido, aseguramos que schedule se guarde con el horario correspondiente.
+    let finalSchedule = formSchedule.trim();
+    if (!finalSchedule && scheduleSlots.length > 0) {
+      finalSchedule = scheduleSlots.join(' / ');
+    } else if (!finalSchedule && selectedDays.length > 0) {
+      const daysText = formatDaysSummary(selectedDays);
+      finalSchedule = `${daysText} ${slotStart} - ${slotEnd}`;
+    }
+    payload.schedule = finalSchedule || null;
+
     try {
       const response = await fetch('/api/services', {
         method: editing ? 'PATCH' : 'POST',
@@ -6184,6 +7673,24 @@ function ServicesModule({ demo }: { demo: (message: string) => void }) {
                   </div>
                 </div>
                 <p>{s.description || 'Sin descripción.'}</p>
+                {s.instructor_name && (
+                  <div style={{
+                    margin: '6px 0 4px',
+                    padding: '4px 10px',
+                    background: '#faf5ff',
+                    borderRadius: '8px',
+                    fontSize: '12px',
+                    color: '#6b21a8',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    border: '1px solid #f3e8ff',
+                    fontWeight: 600,
+                  }}>
+                    <span>👤</span>
+                    <span>Instructor: <strong>{s.instructor_name}</strong></span>
+                  </div>
+                )}
                 {s.schedule ? (
                   <div style={{
                     margin: '6px 0 10px',
@@ -6355,6 +7862,29 @@ function ServicesModule({ demo }: { demo: (message: string) => void }) {
                 />
               </label>
 
+              <label>Instructor / Quién hace la clase
+                <select
+                  name="professionalId"
+                  value={formProfessionalId}
+                  onChange={e => setFormProfessionalId(e.target.value)}
+                >
+                  <option value="">-- Sin instructor fijo asignado --</option>
+                  {team.map(m => (
+                    <option value={m.id} key={m.id}>
+                      {m.name} · {m.role}
+                    </option>
+                  ))}
+                </select>
+                {formProfessionalId && (() => {
+                  const currentInstructor = team.find(m => String(m.id) === String(formProfessionalId));
+                  return currentInstructor ? (
+                    <small style={{ color: '#2563eb', fontWeight: 600, marginTop: '4px', display: 'block' }}>
+                      👤 A cargo: <strong>{currentInstructor.name}</strong> ({currentInstructor.role})
+                    </small>
+                  ) : null;
+                })()}
+              </label>
+
               <div
                 className="full"
                 style={{
@@ -6435,7 +7965,7 @@ function ServicesModule({ demo }: { demo: (message: string) => void }) {
                       <button
                         key={group.label}
                         type="button"
-                        onClick={() => setSelectedDays(group.days)}
+                        onClick={() => handleSelectGroup(group.days)}
                         style={{
                           fontSize: '11px',
                           padding: '3px 8px',
@@ -6455,17 +7985,24 @@ function ServicesModule({ demo }: { demo: (message: string) => void }) {
 
                 {/* 2. Rango de Horas y Botón Agregar */}
                 <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '12px 14px' }}>
-                  <span style={{ fontSize: '12px', fontWeight: 600, color: '#334155', display: 'block', marginBottom: '8px' }}>
-                    2. Rango de hora del bloque:
-                  </span>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'flex-end' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <span style={{ fontSize: '12px', fontWeight: 600, color: '#334155' }}>
+                      2. Rango de hora del bloque:
+                    </span>
+                    {editingSlotIndex !== null && scheduleSlots.length > 1 && (
+                      <span style={{ fontSize: '11px', background: '#dbeafe', color: '#1e40af', padding: '1px 7px', borderRadius: '6px', fontWeight: 600 }}>
+                        Editando bloque #{editingSlotIndex + 1}
+                      </span>
+                    )}
+                  </div>
+                  <div className="schedule-time-row" style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'flex-end' }}>
                     <div style={{ flex: '1 1 110px' }}>
                       <label style={{ fontSize: '11px', fontWeight: 600, color: '#64748b', display: 'block', marginBottom: '4px' }}>
                         Hora Inicio
                       </label>
                       <select
                         value={slotStart}
-                        onChange={e => setSlotStart(e.target.value)}
+                        onChange={e => handleStartChange(e.target.value)}
                         style={{
                           width: '100%',
                           height: '40px',
@@ -6478,9 +8015,12 @@ function ServicesModule({ demo }: { demo: (message: string) => void }) {
                           color: '#0f172a',
                         }}
                       >
-                        {TIME_OPTIONS.slice(0, -1).map(t => (
-                          <option key={`start-${t}`} value={t}>{t} hrs</option>
-                        ))}
+                        {(() => {
+                          const list = TIME_OPTIONS.includes(slotStart) ? TIME_OPTIONS.slice(0, -1) : Array.from(new Set([slotStart, ...TIME_OPTIONS.slice(0, -1)])).sort();
+                          return list.map(t => (
+                            <option key={`start-${t}`} value={t}>{t} hrs</option>
+                          ));
+                        })()}
                       </select>
                     </div>
 
@@ -6490,7 +8030,7 @@ function ServicesModule({ demo }: { demo: (message: string) => void }) {
                       </label>
                       <select
                         value={slotEnd}
-                        onChange={e => setSlotEnd(e.target.value)}
+                        onChange={e => handleEndChange(e.target.value)}
                         style={{
                           width: '100%',
                           height: '40px',
@@ -6503,14 +8043,18 @@ function ServicesModule({ demo }: { demo: (message: string) => void }) {
                           color: '#0f172a',
                         }}
                       >
-                        {TIME_OPTIONS.slice(1).map(t => (
-                          <option key={`end-${t}`} value={t}>{t} hrs</option>
-                        ))}
+                        {(() => {
+                          const list = TIME_OPTIONS.includes(slotEnd) ? TIME_OPTIONS.slice(1) : Array.from(new Set([slotEnd, ...TIME_OPTIONS.slice(1)])).sort();
+                          return list.map(t => (
+                            <option key={`end-${t}`} value={t}>{t} hrs</option>
+                          ));
+                        })()}
                       </select>
                     </div>
 
                     <button
                       type="button"
+                      className="schedule-add-btn"
                       onClick={addCurrentSlot}
                       disabled={selectedDays.length === 0}
                       style={{
@@ -6529,7 +8073,8 @@ function ServicesModule({ demo }: { demo: (message: string) => void }) {
                         flexShrink: 0,
                       }}
                     >
-                      <span>＋</span> Agregar a este horario
+                      <span>{editingSlotIndex !== null && scheduleSlots.length > 1 ? '✓' : '＋'}</span>
+                      {editingSlotIndex !== null && scheduleSlots.length > 1 ? 'Actualizar bloque' : 'Agregar bloque a horario'}
                     </button>
                   </div>
                 </div>
@@ -6537,54 +8082,77 @@ function ServicesModule({ demo }: { demo: (message: string) => void }) {
                 {/* 3. Bloques asignados */}
                 <div>
                   <span style={{ fontSize: '12px', fontWeight: 600, color: '#334155', display: 'block', marginBottom: '8px' }}>
-                    Bloques configurados para esta clase:
+                    Bloques configurados para esta clase (haz clic para editar días u hora):
                   </span>
                   {scheduleSlots.length === 0 ? (
                     <div style={{ padding: '12px', background: '#ffffff', border: '1px dashed #cbd5e1', borderRadius: '8px', color: '#94a3b8', fontSize: '12px', textAlign: 'center' }}>
-                      No has agregado bloques aún. Elige los días y horas arriba y presiona &quot;＋ Agregar a este horario&quot;.
+                      No has agregado bloques aún. Elige los días y horas arriba y presiona &quot;＋ Agregar bloque a horario&quot;.
                     </div>
                   ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                      {scheduleSlots.map((slot, idx) => (
-                        <div
-                          key={`slot-${idx}`}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                            background: '#ffffff',
-                            border: '1px solid #e2e8f0',
-                            borderRadius: '8px',
-                            padding: '8px 12px',
-                          }}
-                        >
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <span style={{ fontSize: '15px' }}>🕒</span>
-                            <strong style={{ fontSize: '13px', color: '#0f172a' }}>{slot}</strong>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => removeSlot(idx)}
-                            title="Quitar este bloque"
-                            style={{
-                              border: 'none',
-                              background: '#fee2e2',
-                              color: '#dc2626',
-                              borderRadius: '6px',
-                              width: '24px',
-                              height: '24px',
-                              fontSize: '12px',
-                              fontWeight: 700,
-                              cursor: 'pointer',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
+                      {scheduleSlots.map((slot, idx) => {
+                        const isCurrentEditing = editingSlotIndex === idx;
+                        return (
+                          <div
+                            key={`slot-${idx}`}
+                            onClick={() => {
+                              setEditingSlotIndex(idx);
+                              const comp = parseSlotStringToComponents(slot);
+                              if (comp.days.length > 0) setSelectedDays(comp.days);
+                              if (comp.start) setSlotStart(comp.start);
+                              if (comp.end) setSlotEnd(comp.end);
                             }}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              background: isCurrentEditing ? '#eff6ff' : '#ffffff',
+                              border: isCurrentEditing ? '1.5px solid #2563eb' : '1px solid #e2e8f0',
+                              borderRadius: '8px',
+                              padding: '8px 12px',
+                              cursor: 'pointer',
+                              transition: 'all 0.15s ease',
+                            }}
+                            title="Haz clic para seleccionar y editar este bloque"
                           >
-                            ✕
-                          </button>
-                        </div>
-                      ))}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <span style={{ fontSize: '15px' }}>{isCurrentEditing ? '✓' : '🕒'}</span>
+                              <strong style={{ fontSize: '13px', color: isCurrentEditing ? '#1d4ed8' : '#0f172a' }}>{slot}</strong>
+                              {isCurrentEditing && (
+                                <span style={{ fontSize: '10px', background: '#2563eb', color: '#ffffff', padding: '1px 6px', borderRadius: '4px', fontWeight: 600 }}>
+                                  Seleccionado
+                                </span>
+                              )}
+                            </div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  removeSlot(idx);
+                                }}
+                                title="Quitar este bloque"
+                                style={{
+                                  border: 'none',
+                                  background: '#fee2e2',
+                                  color: '#dc2626',
+                                  borderRadius: '6px',
+                                  width: '24px',
+                                  height: '24px',
+                                  fontSize: '12px',
+                                  fontWeight: 700,
+                                  cursor: 'pointer',
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                }}
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
                 </div>

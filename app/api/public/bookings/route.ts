@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSupabase } from '../../../lib/supabase';
+import { parseChileDateTime } from '../../../lib/dates';
 
 export async function GET(request: Request) {
   const supabase = getSupabase();
@@ -111,7 +112,7 @@ export async function POST(request: Request) {
 
   if (!service || !professional) return NextResponse.json({ error: 'Clase o instructor no disponible.' }, { status: 400 });
 
-  const start = new Date(`${date}T${time}:00-04:00`);
+  const start = parseChileDateTime(date, time);
   const startsAtIso = start.toISOString();
   const ends = new Date(start.getTime() + service.duration_minutes * 60 * 1000);
   const endsAtIso = ends.toISOString();
