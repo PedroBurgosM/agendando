@@ -107,9 +107,9 @@ function values(body: Record<string, unknown>) {
     !Number.isInteger(duration) ||
     duration < 15 ||
     duration > 480 ||
-    !Number.isInteger(price) ||
+    !Number.isFinite(price) ||
     price < 0 ||
-    !Number.isInteger(deposit) ||
+    !Number.isFinite(deposit) ||
     deposit < 0 ||
     deposit > 100
   ) {

@@ -1,5 +1,6 @@
 'use client';
 import { FormEvent, useEffect, useState } from 'react';
+import { parseScheduleToSlots, calculateRecurringSessions, type ParsedSlot } from '../lib/recurring';
 
 type Catalog = {
   business: {
@@ -35,6 +36,7 @@ export default function BookingPage() {
   const [service, setService] = useState<number | null>(null);
   const [professional, setProfessional] = useState<number | null>(null);
   const [slot, setSlot] = useState('');
+  const [selectedDate, setSelectedDate] = useState('');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [done, setDone] = useState(false);
@@ -65,8 +67,16 @@ export default function BookingPage() {
         }
         const catalog = d as Catalog;
         setData(catalog);
-        setService(catalog.services[0]?.id ?? null);
+        const firstService = catalog.services[0];
+        setService(firstService?.id ?? null);
         setProfessional(catalog.team[0]?.id ?? null);
+        if (firstService?.schedule) {
+          const slots = parseScheduleToSlots(firstService.schedule);
+          if (slots.length > 0) {
+            setSelectedDate(slots[0].date);
+            setSlot(slots[0].time);
+          }
+        }
       })
       .catch(() => setError('La página de reservas no está disponible.'));
   }, []);
@@ -240,7 +250,16 @@ export default function BookingPage() {
                   type="button"
                   key={s.id}
                   className={service === s.id ? 'selected' : ''}
-                  onClick={() => setService(s.id)}
+                  onClick={() => {
+                    setService(s.id);
+                    if (s.schedule) {
+                      const slots = parseScheduleToSlots(s.schedule);
+                      if (slots.length > 0) {
+                        setSelectedDate(slots[0].date);
+                        setSlot(slots[0].time);
+                      }
+                    }
+                  }}
                 >
                   <i>{service === s.id ? '✓' : ''}</i>
                   <div>
@@ -314,18 +333,84 @@ export default function BookingPage() {
           </div>
 
           <div className="form-grid public-contact">
-            <label>Fecha
-              <input name="date" type="date" min={new Date().toISOString().slice(0, 10)} required />
-            </label>
-            <label>Hora de la clase
-              <div className="slots">
-                {['08:00', '09:30', '11:00', '14:00', '16:00', '18:00', '19:30'].map(s => (
-                  <button type="button" className={slot === s ? 'selected' : ''} onClick={() => setSlot(s)} key={s}>
-                    {s}
-                  </button>
-                ))}
+            {chosen?.schedule ? (
+              <div className="full" style={{ background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '10px', padding: '12px 14px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', marginBottom: '10px' }}>
+                  <span style={{ fontSize: '13px', fontWeight: 600, color: '#1e293b' }}>
+                    🗓️ Horario de la clase: <strong>{chosen.schedule}</strong>
+                  </span>
+                  <div style={{ background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', borderRadius: '6px', padding: '3px 8px', fontSize: '12px', fontWeight: 700 }}>
+                    Inicio: {selectedDate} · {slot} hrs
+                  </div>
+                </div>
+                {(() => {
+                  const chosenSlots = parseScheduleToSlots(chosen.schedule);
+                  if (chosenSlots.length === 0) return null;
+                  return (
+                    <div>
+                      <span style={{ fontSize: '11px', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: '6px' }}>
+                        Selecciona el día de tu primera clase:
+                      </span>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                        {chosenSlots.map((s, idx) => {
+                          const isSelected = selectedDate === s.date && slot === s.time;
+                          return (
+                            <button
+                              key={idx}
+                              type="button"
+                              onClick={() => {
+                                setSelectedDate(s.date);
+                                setSlot(s.time);
+                              }}
+                              style={{
+                                background: isSelected ? '#18181b' : '#ffffff',
+                                color: isSelected ? '#ffffff' : '#334155',
+                                border: isSelected ? '1px solid #18181b' : '1px solid #cbd5e1',
+                                padding: '6px 12px',
+                                borderRadius: '8px',
+                                fontSize: '13px',
+                                fontWeight: 600,
+                                cursor: 'pointer',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                transition: 'all 0.15s ease'
+                              }}
+                            >
+                              <span>{isSelected ? '✓' : '•'}</span>
+                              <span>{s.label} ({s.date.slice(5)})</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })()}
+                <input type="hidden" name="date" value={selectedDate} />
               </div>
-            </label>
+            ) : (
+              <>
+                <label>Fecha
+                  <input
+                    name="date"
+                    type="date"
+                    min={new Date().toISOString().slice(0, 10)}
+                    value={selectedDate}
+                    onChange={(e) => setSelectedDate(e.target.value)}
+                    required
+                  />
+                </label>
+                <label>Hora de la clase
+                  <div className="slots">
+                    {['08:00', '09:30', '11:00', '14:00', '16:00', '18:00', '19:30'].map(s => (
+                      <button type="button" className={slot === s ? 'selected' : ''} onClick={() => setSlot(s)} key={s}>
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                </label>
+              </>
+            )}
             <label className="full">Nombre del alumno
               <input name="customerName" required placeholder="Tu nombre y apellido" />
             </label>

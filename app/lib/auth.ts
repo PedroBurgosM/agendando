@@ -1,7 +1,16 @@
 // Web Crypto API based Authentication & Session Management
 // Works universally in Node.js 18+, Edge Runtime, Cloudflare Workers, and Vercel
 
-const JWT_SECRET = process.env.SESSION_SECRET || 'agendando-woodland-secure-jwt-key-2026-prod';
+function getJwtSecret(): string {
+  const secret = process.env.SESSION_SECRET;
+  if (!secret) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('[SEGURIDAD CRÍTICA] SESSION_SECRET no está configurada en las variables de entorno de producción.');
+    }
+    return 'agendando-woodland-secure-jwt-key-2026-prod';
+  }
+  return secret;
+}
 
 export interface AuthUser {
   id: number;
@@ -44,7 +53,7 @@ async function getHmacKey(): Promise<CryptoKey> {
   const encoder = new TextEncoder();
   return crypto.subtle.importKey(
     'raw',
-    encoder.encode(JWT_SECRET),
+    encoder.encode(getJwtSecret()),
     { name: 'HMAC', hash: 'SHA-256' },
     false,
     ['sign', 'verify']

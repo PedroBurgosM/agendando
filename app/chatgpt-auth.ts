@@ -1,6 +1,7 @@
 import { headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { verifySessionToken } from './lib/auth';
+import { getSupabase } from './lib/supabase';
 
 export type ChatGPTUser = {
   userId: string;
@@ -44,6 +45,28 @@ export async function getChatGPTUser(): Promise<ChatGPTUser | null> {
   if (token) {
     const session = await verifySessionToken(token);
     if (session) {
+      // Verificación de revocación / cuenta deshabilitada
+      const supabase = getSupabase();
+      if (supabase) {
+        try {
+          const { data: dbUser, error } = await supabase
+            .from('users')
+            .select('id, password_hash')
+            .eq('id', session.id)
+            .maybeSingle();
+
+          if (!error && dbUser) {
+            if (dbUser.password_hash && dbUser.password_hash.startsWith('DISABLED:')) {
+              return null; // Sesión revocada inmediatamente por cuenta deshabilitada
+            }
+          } else if (!error && !dbUser) {
+            return null; // El usuario fue eliminado de la base de datos
+          }
+        } catch (e) {
+          console.error('[AUTH ERROR] Error validando estado de usuario:', e);
+        }
+      }
+
       return {
         userId: String(session.id),
         displayName: session.name,

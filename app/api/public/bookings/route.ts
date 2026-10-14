@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getSupabase } from '../../../lib/supabase';
 import { parseChileDateTime } from '../../../lib/dates';
+import { calculateRecurringSessions } from '../../../lib/recurring';
 
 export async function GET(request: Request) {
   const supabase = getSupabase();
@@ -53,9 +54,58 @@ export async function GET(request: Request) {
   });
 }
 
+// Rate Limiter en memoria para reservas públicas: máximo 5 reservas cada 10 minutos por IP
+const publicBookingAttempts = new Map<string, { count: number; resetAt: number }>();
+
+function checkPublicBookingRateLimit(ip: string): { allowed: boolean; waitMinutes?: number } {
+  const now = Date.now();
+  if (publicBookingAttempts.size > 1000) {
+    for (const [key, val] of publicBookingAttempts.entries()) {
+      if (now > val.resetAt) publicBookingAttempts.delete(key);
+    }
+  }
+
+  const entry = publicBookingAttempts.get(ip);
+  if (!entry) return { allowed: true };
+  if (now > entry.resetAt) {
+    publicBookingAttempts.delete(ip);
+    return { allowed: true };
+  }
+  if (entry.count >= 5) {
+    const waitMinutes = Math.max(1, Math.ceil((entry.resetAt - now) / 60000));
+    return { allowed: false, waitMinutes };
+  }
+  return { allowed: true };
+}
+
+function recordPublicBookingAttempt(ip: string) {
+  const now = Date.now();
+  const windowMs = 10 * 60 * 1000; // 10 minutos
+  const entry = publicBookingAttempts.get(ip);
+  if (!entry || now > entry.resetAt) {
+    publicBookingAttempts.set(ip, { count: 1, resetAt: now + windowMs });
+  } else {
+    entry.count += 1;
+  }
+}
+
 export async function POST(request: Request) {
+  // Verificación de Rate Limiting por IP para evitar spam o ataques DoS de reservas
+  const forwardedHeader = request.headers.get('x-forwarded-for') || request.headers.get('x-real-ip') || request.headers.get('cf-connecting-ip');
+  const clientIp = forwardedHeader ? forwardedHeader.split(',')[0].trim() : '127.0.0.1';
+
+  const rateCheck = checkPublicBookingRateLimit(clientIp);
+  if (!rateCheck.allowed) {
+    return NextResponse.json(
+      { error: `Has superado el límite de reservas permitidas. Por seguridad, espera ${rateCheck.waitMinutes} minuto(s) antes de intentar de nuevo.` },
+      { status: 429 }
+    );
+  }
+
   const supabase = getSupabase();
   if (!supabase) return NextResponse.json({ error: 'Supabase no configurado.' }, { status: 500 });
+
+  recordPublicBookingAttempt(clientIp);
 
   const x = (await request.json()) as Record<string, unknown>;
   const slug = (x.slug || x.negocio) as string | undefined;
@@ -96,7 +146,7 @@ export async function POST(request: Request) {
 
   const { data: service } = await supabase
     .from('services')
-    .select('id, name, class_type, capacity, duration_minutes, price_clp')
+    .select('id, name, class_type, capacity, duration_minutes, price_clp, billing_period, schedule')
     .eq('id', serviceId)
     .eq('business_id', business.id)
     .eq('active', true)
@@ -111,50 +161,6 @@ export async function POST(request: Request) {
     .maybeSingle();
 
   if (!service || !professional) return NextResponse.json({ error: 'Clase o instructor no disponible.' }, { status: 400 });
-
-  const start = parseChileDateTime(date, time);
-  const startsAtIso = start.toISOString();
-  const ends = new Date(start.getTime() + service.duration_minutes * 60 * 1000);
-  const endsAtIso = ends.toISOString();
-
-  const now = new Date();
-  const maxWindow = new Date(now.getTime() + (business.booking_window_days || 60) * 86400 * 1000);
-  if (start < now || start > maxWindow) {
-    return NextResponse.json({ error: 'La fecha está fuera del período permitido.' }, { status: 400 });
-  }
-
-  // Capacity check
-  const { count: enrolledCount } = await supabase
-    .from('bookings')
-    .select('id', { count: 'exact', head: true })
-    .eq('service_id', service.id)
-    .eq('starts_at', startsAtIso)
-    .neq('status', 'cancelled');
-
-  const currentEnrolled = enrolledCount ?? 0;
-  const maxCapacity = service.class_type === 'grupal' ? (service.capacity || 10) : 1;
-
-  if (currentEnrolled >= maxCapacity) {
-    return NextResponse.json({
-      error: `¡Lo sentimos! Esta clase ya completó su cupo máximo permitido (${maxCapacity} alumnos). Por favor selecciona otro horario.`,
-    }, { status: 409 });
-  }
-
-  // Conflict check for instructor
-  const { data: conflict } = await supabase
-    .from('bookings')
-    .select('id')
-    .eq('professional_id', professional.id)
-    .neq('service_id', service.id)
-    .neq('status', 'cancelled')
-    .lt('starts_at', endsAtIso)
-    .gt('ends_at', startsAtIso)
-    .limit(1)
-    .maybeSingle();
-
-  if (conflict) {
-    return NextResponse.json({ error: 'El instructor ya tiene otra clase agendada en ese horario. Por favor elige otro horario.' }, { status: 409 });
-  }
 
   let { data: customer } = await supabase
     .from('customers')
@@ -189,46 +195,146 @@ export async function POST(request: Request) {
 
   if (!customer) return NextResponse.json({ error: 'Error al asociar alumno.' }, { status: 500 });
 
-  // Prevent double enrollment
-  const { data: alreadyBooked } = await supabase
-    .from('bookings')
-    .select('id')
-    .eq('service_id', service.id)
-    .eq('customer_id', customer.id)
-    .eq('starts_at', startsAtIso)
-    .neq('status', 'cancelled')
-    .maybeSingle();
+  // Generate all recurring sessions for this service pack
+  const sessionsToCreate = calculateRecurringSessions({
+    serviceName: service.name,
+    billingPeriod: service.billing_period,
+    schedule: service.schedule,
+    startDate: date,
+    startTime: time,
+  });
 
-  if (alreadyBooked) {
-    return NextResponse.json({ error: 'Ya te encuentras registrado en esta clase.' }, { status: 409 });
+  const durationMs = service.duration_minutes * 60 * 1000;
+  const maxCapacity = service.class_type === 'grupal' ? (service.capacity || 10) : 1;
+
+  const validSessions: Array<{ startsAtIso: string; endsAtIso: string; start: Date }> = [];
+  let alreadyBookedCount = 0;
+
+  for (const s of sessionsToCreate) {
+    const sStart = parseChileDateTime(s.date, s.time);
+    if (Number.isNaN(sStart.getTime())) continue;
+    const sStartsAtIso = sStart.toISOString();
+    const sEndsAtIso = new Date(sStart.getTime() + durationMs).toISOString();
+
+    // Check if student is already booked
+    const { data: alreadyBooked } = await supabase
+      .from('bookings')
+      .select('id')
+      .eq('service_id', service.id)
+      .eq('customer_id', customer.id)
+      .eq('starts_at', sStartsAtIso)
+      .neq('status', 'cancelled')
+      .maybeSingle();
+
+    if (alreadyBooked) {
+      alreadyBookedCount++;
+      continue;
+    }
+
+    // 1. Verificar si el alumno ya tiene clase en ese horario
+    const { data: studentOverlap } = await supabase
+      .from('bookings')
+      .select('id, starts_at, ends_at, services(name)')
+      .eq('customer_id', customer.id)
+      .neq('status', 'cancelled')
+      .lt('starts_at', sEndsAtIso)
+      .gt('ends_at', sStartsAtIso)
+      .limit(1)
+      .maybeSingle();
+
+    if (studentOverlap) {
+      if (sessionsToCreate.length === 1) {
+        return NextResponse.json({
+          error: `Ya tienes otra clase reservada en este mismo horario (${(studentOverlap as any).services?.name || 'Clase'}).`,
+        }, { status: 409 });
+      }
+      alreadyBookedCount++;
+      continue;
+    }
+
+    // 2. Verificar disponibilidad del instructor (horario tomado)
+    const { data: instructorOverlaps } = await supabase
+      .from('bookings')
+      .select('id, service_id, starts_at, ends_at, services(name, class_type, capacity)')
+      .eq('professional_id', professional.id)
+      .neq('status', 'cancelled')
+      .lt('starts_at', sEndsAtIso)
+      .gt('ends_at', sStartsAtIso);
+
+    const activeOverlaps = instructorOverlaps || [];
+
+    if (activeOverlaps.length > 0) {
+      if (service.class_type === 'individual' || maxCapacity === 1) {
+        if (sessionsToCreate.length === 1) {
+          return NextResponse.json({
+            error: `El horario de las ${s.time} hrs ya se encuentra tomado con este instructor. Por favor selecciona otro horario.`,
+          }, { status: 409 });
+        }
+        continue;
+      }
+
+      const hasForeignClass = activeOverlaps.some(b => b.service_id !== service.id || b.starts_at !== sStartsAtIso);
+      if (hasForeignClass) {
+        if (sessionsToCreate.length === 1) {
+          return NextResponse.json({
+            error: 'El instructor ya tiene otra clase agendada en ese horario. Por favor elige otro horario.',
+          }, { status: 409 });
+        }
+        continue;
+      }
+
+      if (activeOverlaps.length >= maxCapacity) {
+        if (sessionsToCreate.length === 1) {
+          return NextResponse.json({
+            error: `¡Lo sentimos! Esta clase ya completó su cupo máximo permitido (${maxCapacity} alumnos). Por favor selecciona otro horario.`,
+          }, { status: 409 });
+        }
+        continue;
+      }
+    }
+
+    validSessions.push({ startsAtIso: sStartsAtIso, endsAtIso: sEndsAtIso, start: sStart });
+  }
+
+  if (validSessions.length === 0) {
+    if (alreadyBookedCount > 0) {
+      return NextResponse.json({ error: 'Ya te encuentras registrado en las fechas de esta clase.' }, { status: 409 });
+    }
+    return NextResponse.json({ error: 'No hay cupos disponibles en las fechas solicitadas.' }, { status: 409 });
   }
 
   const paymentStatus = customer.membership_status === 'active' ? 'paid' : 'unpaid';
+  const amountPerSession = Math.round(service.price_clp / validSessions.length);
 
-  const { data: booking, error: bookingErr } = await supabase
+  const rowsToInsert = validSessions.map((s, idx) => ({
+    business_id: business.id,
+    service_id: service.id,
+    professional_id: professional.id,
+    customer_id: customer.id,
+    starts_at: s.startsAtIso,
+    ends_at: s.endsAtIso,
+    status: 'confirmed',
+    payment_status: paymentStatus,
+    amount_clp: idx === 0
+      ? service.price_clp - (amountPerSession * (validSessions.length - 1))
+      : amountPerSession,
+  }));
+
+  const { data: insertedList, error: bookingErr } = await supabase
     .from('bookings')
-    .insert({
-      business_id: business.id,
-      service_id: service.id,
-      professional_id: professional.id,
-      customer_id: customer.id,
-      starts_at: startsAtIso,
-      ends_at: endsAtIso,
-      status: 'confirmed',
-      payment_status: paymentStatus,
-      amount_clp: service.price_clp,
-    })
-    .select('id')
-    .single();
+    .insert(rowsToInsert)
+    .select('id');
 
-  if (bookingErr || !booking) {
+  if (bookingErr || !insertedList) {
     return NextResponse.json({ error: bookingErr?.message || 'Error al guardar la reserva.' }, { status: 500 });
   }
 
-  const enrolledNow = currentEnrolled + 1;
-  const classDateStr = start.toLocaleDateString('es-CL', { weekday: 'long', day: 'numeric', month: 'long' });
-  const classTimeStr = start.toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' });
-  const confirmMsg = `¡Hola ${name}! Tu cupo para la clase de ${service.name} con ${professional.name} ha sido reservado para el ${classDateStr} a las ${classTimeStr}. (${enrolledNow}/${maxCapacity} cupos).`;
+  const firstSession = validSessions[0];
+  const classDateStr = firstSession.start.toLocaleDateString('es-CL', { weekday: 'long', day: 'numeric', month: 'long' });
+  const classTimeStr = firstSession.start.toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' });
+  const confirmMsg = validSessions.length > 1
+    ? `¡Hola ${name}! Tu cupo para las ${validSessions.length} sesiones de ${service.name} con ${professional.name} ha sido reservado a partir del ${classDateStr} a las ${classTimeStr}.`
+    : `¡Hola ${name}! Tu cupo para la clase de ${service.name} con ${professional.name} ha sido reservado para el ${classDateStr} a las ${classTimeStr}.`;
 
   await supabase.from('notifications').insert({
     business_id: business.id,
@@ -242,8 +348,13 @@ export async function POST(request: Request) {
     sent_at: new Date().toISOString(),
   });
 
+  const booking = insertedList[0];
+
   if (professional && (professional.email || professional.phone)) {
-    const profMsg = `¡Hola ${professional.name}! Tienes una nueva reserva para tu clase de ${service.name} el ${classDateStr} a las ${classTimeStr}. Alumno: ${name} (${phone || email}). Cupos: ${enrolledNow}/${maxCapacity}.`;
+    const profMsg = validSessions.length > 1
+      ? `¡Hola ${professional.name}! Tienes una nueva reserva para tu clase de ${service.name} a partir del ${classDateStr} a las ${classTimeStr} (${validSessions.length} sesiones). Alumno: ${name} (${phone || email}).`
+      : `¡Hola ${professional.name}! Tienes una nueva reserva para tu clase de ${service.name} el ${classDateStr} a las ${classTimeStr}. Alumno: ${name} (${phone || email}).`;
+
     await supabase.from('notifications').insert({
       business_id: business.id,
       customer_id: null,
@@ -264,7 +375,10 @@ export async function POST(request: Request) {
   return NextResponse.json({
     id: booking.id,
     bookingId: booking.id,
-    message: `¡Tu cupo quedó asegurado! (${enrolledNow}/${maxCapacity} inscritos).`,
+    bookingsCount: validSessions.length,
+    message: validSessions.length > 1
+      ? `¡Tus ${validSessions.length} clases quedaron reservadas con éxito!`
+      : '¡Tu cupo quedó asegurado!',
     serviceName: service.name,
     professionalName: professional.name,
     classDateStr,

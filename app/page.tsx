@@ -2,118 +2,16 @@
 
 import { type CSSProperties, type FormEvent, useEffect, useMemo, useState } from 'react';
 import { ProfilesModule } from './components/ProfilesModule';
+import { calculateRecurringSessions, splitScheduleString, parseScheduleToSlots, addMinutesToTime, calculateMinutesBetween, type ParsedSlot } from './lib/recurring';
+import { parseChileDateTime } from './lib/dates';
 
 const chileDateParts = (value: Date) => Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Santiago', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(value).filter(p => p.type !== 'literal').map(p => [p.type, p.value]));
-const localDateKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+const localDateKey = (date: Date) => { const p = chileDateParts(date); return `${p.year}-${p.month}-${p.day}`; };
 const bookingDateKey = (seconds: number) => { const p = chileDateParts(new Date(seconds * 1000)); return `${p.year}-${p.month}-${p.day}`; };
 const startOfWeek = (date: Date) => { const result = new Date(date); result.setHours(12, 0, 0, 0); result.setDate(result.getDate() - ((result.getDay() + 6) % 7)); return result; };
 const addDays = (date: Date, days: number) => { const result = new Date(date); result.setDate(result.getDate() + days); return result; };
 
-export interface ParsedSlot {
-  label: string;
-  date: string;
-  time: string;
-  dayName: string;
-}
-
-export function parseScheduleToSlots(scheduleStr: string | null | undefined, refDate = new Date()): ParsedSlot[] {
-  if (!scheduleStr || typeof scheduleStr !== 'string') return [];
-  const trimmed = scheduleStr.trim();
-  if (!trimmed) return [];
-
-  const dayMap: Record<string, number> = {
-    'lun': 1, 'lunes': 1,
-    'mar': 2, 'martes': 2,
-    'mié': 3, 'mie': 3, 'miércoles': 3, 'miercoles': 3,
-    'jue': 4, 'jueves': 4,
-    'vie': 5, 'viernes': 5,
-    'sáb': 6, 'sab': 6, 'sábado': 6, 'sabado': 6,
-    'dom': 7, 'domingo': 7, 'domingos': 7, 'sábados': 6, 'sabados': 6
-  };
-
-  const dayNamesShort: Record<number, string> = {
-    1: 'Lun', 2: 'Mar', 3: 'Mié', 4: 'Jue', 5: 'Vie', 6: 'Sáb', 7: 'Dom'
-  };
-
-  const parts = trimmed.split(/\s*\/\s*/);
-  const slots: ParsedSlot[] = [];
-
-  const refYear = refDate.getFullYear();
-  const refMonth = refDate.getMonth();
-  const refDay = refDate.getDate();
-  const refHours = refDate.getHours();
-  const refMinutes = refDate.getMinutes();
-
-  for (const part of parts) {
-    const timeMatch = part.match(/(\d{1,2}:\d{2})/);
-    const startTime = timeMatch ? timeMatch[1].padStart(5, '0') : '18:00';
-    const [startH, startM] = startTime.split(':').map(Number);
-
-    const norm = part
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '');
-
-    const targetDays = new Set<number>();
-
-    if (norm.includes('todos los dias')) {
-      [1, 2, 3, 4, 5, 6, 7].forEach(d => targetDays.add(d));
-    } else if (norm.includes('lunes a viernes') || norm.includes('lun a vie')) {
-      [1, 2, 3, 4, 5].forEach(d => targetDays.add(d));
-    } else if (norm.includes('sab y dom') || norm.includes('finde')) {
-      [6, 7].forEach(d => targetDays.add(d));
-    } else {
-      if (/\blun(es)?\b/.test(norm)) targetDays.add(1);
-      if (/\bmar(tes)?\b/.test(norm)) targetDays.add(2);
-      if (/\bmie(rcoles)?\b/.test(norm)) targetDays.add(3);
-      if (/\bjue(ves)?\b/.test(norm)) targetDays.add(4);
-      if (/\bvie(rnes)?\b/.test(norm)) targetDays.add(5);
-      if (/\bsab(ado|ados)?\b/.test(norm)) targetDays.add(6);
-      if (/\bdom(ingo|ingos)?\b/.test(norm)) targetDays.add(7);
-    }
-
-    if (targetDays.size === 0) {
-      // Fallback: If no explicit day matched, use today's or tomorrow's date
-      const d = new Date(refYear, refMonth, refDay);
-      if (refHours > startH || (refHours === startH && refMinutes >= startM)) {
-        d.setDate(d.getDate() + 1);
-      }
-      slots.push({
-        label: `${startTime} hrs`,
-        date: localDateKey(d),
-        time: startTime,
-        dayName: 'Próxima sesión'
-      });
-      continue;
-    }
-
-    const currentIsoDay = refDate.getDay() === 0 ? 7 : refDate.getDay();
-
-    for (const targetDay of Array.from(targetDays).sort()) {
-      let daysAhead = targetDay - currentIsoDay;
-      if (daysAhead < 0) {
-        daysAhead += 7;
-      } else if (daysAhead === 0) {
-        if (refHours > startH || (refHours === startH && refMinutes >= startM)) {
-          daysAhead = 7;
-        }
-      }
-
-      const slotDate = new Date(refYear, refMonth, refDay + daysAhead);
-      const dayLabel = dayNamesShort[targetDay] || '';
-      slots.push({
-        label: `${dayLabel} ${startTime}`,
-        date: localDateKey(slotDate),
-        time: startTime,
-        dayName: dayLabel
-      });
-    }
-  }
-
-  // Sort slots by calendar date ascending
-  slots.sort((a, b) => a.date.localeCompare(b.date));
-  return slots;
-}
+export { parseScheduleToSlots, type ParsedSlot };
 
 function SummaryDashboard({
   setActive,
@@ -1417,6 +1315,40 @@ function AgendaModule({ demo }: { demo: (message: string) => void }) {
     void loadStudents();
   }, []);
 
+  function checkSlotTaken(dateStr: string, timeStr: string, chosenService?: Service, profId?: string): { isTaken: boolean; reason?: string } {
+    if (!chosenService || !profId) return { isTaken: false };
+    const start = parseChileDateTime(dateStr, timeStr);
+    if (Number.isNaN(start.getTime())) return { isTaken: false };
+    const startSec = Math.floor(start.getTime() / 1000);
+    const endSec = startSec + (chosenService.duration_minutes || 60) * 60;
+
+    const overlapping = savedBookings.filter(b =>
+      b.status !== 'cancelled' &&
+      String(b.professional_id) === String(profId) &&
+      b.starts_at < endSec &&
+      b.ends_at > startSec
+    );
+
+    if (overlapping.length === 0) return { isTaken: false };
+
+    if (chosenService.class_type === 'individual' || (chosenService.capacity || 1) === 1) {
+      const b0 = overlapping[0];
+      return { isTaken: true, reason: `Horario tomado (${b0.service_name || 'Clase'})` };
+    }
+
+    const hasDiff = overlapping.some(b => String(b.service_id) !== String(chosenService.id));
+    if (hasDiff) {
+      return { isTaken: true, reason: 'Instructor ocupado con otra clase' };
+    }
+
+    const maxCap = chosenService.capacity || 10;
+    if (overlapping.length >= maxCap) {
+      return { isTaken: true, reason: `Cupos agotados (${overlapping.length}/${maxCap})` };
+    }
+
+    return { isTaken: false };
+  }
+
   async function createBooking(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setFormError('');
@@ -2096,9 +2028,12 @@ function AgendaModule({ demo }: { demo: (message: string) => void }) {
                     if (chosen?.schedule) {
                       const slots = parseScheduleToSlots(chosen.schedule);
                       setAgendaBookingSlots(slots);
-                      if (slots.length > 0) {
-                        setAgendaBookingDate(slots[0].date);
-                        setAgendaBookingTime(slots[0].time);
+                      // Seleccionar automáticamente el primer horario que NO esté tomado
+                      const firstAvailable = slots.find(s => !checkSlotTaken(s.date, s.time, chosen, profId).isTaken);
+                      const targetSlot = firstAvailable || slots[0];
+                      if (targetSlot) {
+                        setAgendaBookingDate(targetSlot.date);
+                        setAgendaBookingTime(targetSlot.time);
                       } else {
                         setAgendaBookingDate(localDateKey(new Date()));
                         setAgendaBookingTime('18:00');
@@ -2127,52 +2062,126 @@ function AgendaModule({ demo }: { demo: (message: string) => void }) {
                 const chosen = agendaServices.find(s => String(s.id) === String(agendaBookingServiceId));
                 const instructor = agendaTeam.find(m => String(m.id) === String(agendaBookingProfessionalId));
                 const instructorName = instructor?.name || chosen?.instructor_name || 'Instructor asignado';
+                const currentSlotCheck = checkSlotTaken(agendaBookingDate, agendaBookingTime, chosen, agendaBookingProfessionalId);
+                const recurringPreview = chosen ? calculateRecurringSessions({
+                  serviceName: chosen.name,
+                  billingPeriod: chosen.billing_period,
+                  schedule: chosen.schedule,
+                  startDate: agendaBookingDate || localDateKey(new Date()),
+                  startTime: agendaBookingTime || '18:00',
+                }) : [];
+
                 return (
                   <div className="full" style={{ background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '10px', padding: '12px 14px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', marginBottom: agendaBookingSlots.length > 1 ? '10px' : '0' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', marginBottom: '8px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <span style={{ fontSize: '13px', fontWeight: 600, color: '#1e293b' }}>
                           👤 Instructor: <strong>{instructorName}</strong>
                         </span>
+                        {chosen?.schedule && (
+                          <span style={{ fontSize: '12px', color: '#64748b' }}>
+                            · 🕒 Horario: <strong>{chosen.schedule}</strong>
+                          </span>
+                        )}
                       </div>
-                      <div style={{ background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', fontWeight: 700 }}>
-                        📅 {agendaBookingDate} · 🕒 {agendaBookingTime} hrs
+                      <div style={{
+                        background: currentSlotCheck.isTaken ? '#fef2f2' : '#eff6ff',
+                        color: currentSlotCheck.isTaken ? '#dc2626' : '#1d4ed8',
+                        border: currentSlotCheck.isTaken ? '1px solid #fca5a5' : '1px solid #bfdbfe',
+                        borderRadius: '6px',
+                        padding: '4px 10px',
+                        fontSize: '12px',
+                        fontWeight: 700
+                      }}>
+                        {currentSlotCheck.isTaken ? '⛔' : '📅'} Inicio: {agendaBookingDate} · 🕒 {agendaBookingTime} hrs
                       </div>
                     </div>
+
+                    {currentSlotCheck.isTaken && (
+                      <div style={{ background: '#fee2e2', border: '1px solid #f87171', borderRadius: '8px', padding: '8px 12px', margin: '8px 0', color: '#991b1b', fontSize: '12px', fontWeight: 600 }}>
+                        ⚠️ Este horario ya se encuentra tomado con {instructorName}. No es posible sobreponer otra clase en el mismo bloque. Por favor selecciona otro día u horario disponible.
+                      </div>
+                    )}
+
                     {agendaBookingSlots.length > 1 && (
-                      <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '8px', marginTop: '4px' }}>
+                      <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '8px', marginTop: '4px', marginBottom: '8px' }}>
                         <span style={{ fontSize: '11px', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'block', marginBottom: '6px' }}>
-                          Días asignados a esta clase (haz clic para cambiar fecha):
+                          Elegir día de la primera sesión:
                         </span>
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
                           {agendaBookingSlots.map((slot, idx) => {
+                            const slotStatus = checkSlotTaken(slot.date, slot.time, chosen, agendaBookingProfessionalId);
                             const isSelected = agendaBookingDate === slot.date && agendaBookingTime === slot.time;
                             return (
                               <button
                                 key={idx}
                                 type="button"
+                                disabled={slotStatus.isTaken}
                                 onClick={() => {
-                                  setAgendaBookingDate(slot.date);
-                                  setAgendaBookingTime(slot.time);
+                                  if (!slotStatus.isTaken) {
+                                    setAgendaBookingDate(slot.date);
+                                    setAgendaBookingTime(slot.time);
+                                  }
                                 }}
+                                title={slotStatus.isTaken ? (slotStatus.reason || 'Horario tomado') : 'Horario disponible'}
                                 style={{
-                                  background: isSelected ? '#18181b' : '#ffffff',
-                                  color: isSelected ? '#ffffff' : '#334155',
-                                  border: isSelected ? '1px solid #18181b' : '1px solid #cbd5e1',
+                                  background: slotStatus.isTaken ? '#f1f5f9' : isSelected ? '#18181b' : '#ffffff',
+                                  color: slotStatus.isTaken ? '#94a3b8' : isSelected ? '#ffffff' : '#334155',
+                                  border: slotStatus.isTaken ? '1px dashed #cbd5e1' : isSelected ? '1px solid #18181b' : '1px solid #cbd5e1',
                                   padding: '4px 10px',
                                   borderRadius: '6px',
                                   fontSize: '12px',
                                   fontWeight: 600,
-                                  cursor: 'pointer',
+                                  cursor: slotStatus.isTaken ? 'not-allowed' : 'pointer',
                                   display: 'inline-flex',
                                   alignItems: 'center',
                                   gap: '4px',
+                                  opacity: slotStatus.isTaken ? 0.65 : 1,
                                   transition: 'all 0.15s ease'
                                 }}
                               >
-                                <span>{isSelected ? '✓' : '•'}</span>
+                                <span>{slotStatus.isTaken ? '⛔' : isSelected ? '✓' : '•'}</span>
                                 <span>{slot.label} ({slot.date.slice(5)})</span>
+                                {slotStatus.isTaken && <small style={{ fontSize: '10px', color: '#ef4444' }}>· Tomado</small>}
                               </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {recurringPreview.length > 1 && (
+                      <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '8px', marginTop: '4px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                          <span style={{ fontSize: '11px', fontWeight: 700, color: '#047857', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                            ✓ Plan completo: Se agendarán las {recurringPreview.length} sesiones automáticamente
+                          </span>
+                          <span style={{ fontSize: '11px', fontWeight: 600, color: '#64748b' }}>
+                            Total: {recurringPreview.length} clases
+                          </span>
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '6px', maxHeight: '140px', overflowY: 'auto' }}>
+                          {recurringPreview.map((s, idx) => {
+                            const sStatus = checkSlotTaken(s.date, s.time, chosen, agendaBookingProfessionalId);
+                            return (
+                              <div
+                                key={idx}
+                                style={{
+                                  background: sStatus.isTaken ? '#fef2f2' : '#f0fdf4',
+                                  border: sStatus.isTaken ? '1px solid #fecaca' : '1px solid #bbf7d0',
+                                  borderRadius: '6px',
+                                  padding: '4px 8px',
+                                  fontSize: '11px',
+                                  color: sStatus.isTaken ? '#991b1b' : '#166534',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '4px'
+                                }}
+                              >
+                                <strong style={{ fontSize: '10px', background: sStatus.isTaken ? '#fee2e2' : '#dcfce7', borderRadius: '4px', padding: '1px 4px' }}>#{idx + 1}</strong>
+                                <span>{s.dayName} {s.date.slice(5)} · {s.time}</span>
+                                {sStatus.isTaken && <span style={{ marginLeft: 'auto', fontWeight: 700, fontSize: '9px', color: '#ef4444' }}>⛔ Tomado</span>}
+                              </div>
                             );
                           })}
                         </div>
@@ -2190,7 +2199,15 @@ function AgendaModule({ demo }: { demo: (message: string) => void }) {
             {formError && <div className="form-error" role="alert">{formError}</div>}
             <div className="modal-footer">
               <button type="button" onClick={() => setShowNew(false)}>Cancelar</button>
-              <button type="submit" disabled={saving || agendaServices.length === 0 || agendaTeam.length === 0}>
+              <button
+                type="submit"
+                disabled={
+                  saving ||
+                  agendaServices.length === 0 ||
+                  agendaTeam.length === 0 ||
+                  Boolean(agendaBookingServiceId && checkSlotTaken(agendaBookingDate, agendaBookingTime, agendaServices.find(s => String(s.id) === String(agendaBookingServiceId)), agendaBookingProfessionalId).isTaken)
+                }
+              >
                 {saving ? 'Guardando…' : 'Confirmar Cupo'}
               </button>
             </div>
@@ -2458,6 +2475,14 @@ function BookingsModule({ demo }: { demo: (message: string) => void }) {
     const form = new FormData(e.currentTarget);
     const date = String(form.get('date'));
     const time = String(form.get('time'));
+
+    const targetDt = parseChileDateTime(date, time);
+    if (!Number.isNaN(targetDt.getTime()) && targetDt.getTime() < Date.now() - 5 * 60 * 1000) {
+      setFormError('No se puede seleccionar una fecha u hora pasada.');
+      setSaving(false);
+      return;
+    }
+
     try {
       const res = await fetch('/api/bookings', {
         method: 'PATCH',
@@ -2503,6 +2528,40 @@ function BookingsModule({ demo }: { demo: (message: string) => void }) {
     }
   }
 
+  function checkBookingSlotTaken(dateStr: string, timeStr: string, chosenService?: Service, profId?: string): { isTaken: boolean; reason?: string } {
+    if (!chosenService || !profId) return { isTaken: false };
+    const start = parseChileDateTime(dateStr, timeStr);
+    if (Number.isNaN(start.getTime())) return { isTaken: false };
+    const startSec = Math.floor(start.getTime() / 1000);
+    const endSec = startSec + (chosenService.duration_minutes || 60) * 60;
+
+    const overlapping = bookings.filter(b =>
+      b.status !== 'cancelled' &&
+      String(b.professional_id) === String(profId) &&
+      b.starts_at < endSec &&
+      b.ends_at > startSec
+    );
+
+    if (overlapping.length === 0) return { isTaken: false };
+
+    if (chosenService.class_type === 'individual' || (chosenService.capacity || 1) === 1) {
+      const b0 = overlapping[0];
+      return { isTaken: true, reason: `Horario tomado (${b0.service_name || 'Clase'})` };
+    }
+
+    const hasDiff = overlapping.some(b => String(b.service_id) !== String(chosenService.id));
+    if (hasDiff) {
+      return { isTaken: true, reason: 'Instructor ocupado con otra clase' };
+    }
+
+    const maxCap = chosenService.capacity || 10;
+    if (overlapping.length >= maxCap) {
+      return { isTaken: true, reason: `Cupos agotados (${overlapping.length}/${maxCap})` };
+    }
+
+    return { isTaken: false };
+  }
+
   async function createBooking(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setSaving(true);
@@ -2512,6 +2571,16 @@ function BookingsModule({ demo }: { demo: (message: string) => void }) {
     if (selectedStudentId && selectedStudentId !== 'new') {
       payload.customerId = selectedStudentId;
     }
+
+    const bookingDateStr = String(payload.date || bookingDate);
+    const bookingTimeStr = String(payload.time || bookingTime);
+    const targetDt = parseChileDateTime(bookingDateStr, bookingTimeStr);
+    if (!Number.isNaN(targetDt.getTime()) && targetDt.getTime() < Date.now() - 5 * 60 * 1000) {
+      setFormError('No se puede agendar una clase en una fecha u hora pasada.');
+      setSaving(false);
+      return;
+    }
+
     try {
       const res = await fetch('/api/bookings', {
         method: 'POST',
@@ -2924,8 +2993,9 @@ function BookingsModule({ demo }: { demo: (message: string) => void }) {
                       const slots = parseScheduleToSlots(chosen.schedule);
                       setBookingSlots(slots);
                       if (slots.length > 0) {
-                        setBookingDate(slots[0].date);
-                        setBookingTime(slots[0].time);
+                        const availableSlot = slots.find(s => !checkBookingSlotTaken(s.date, s.time, chosen, profId).isTaken) || slots[0];
+                        setBookingDate(availableSlot.date);
+                        setBookingTime(availableSlot.time);
                       } else {
                         setBookingDate(todayKey);
                         setBookingTime('18:00');
@@ -2954,52 +3024,126 @@ function BookingsModule({ demo }: { demo: (message: string) => void }) {
                 const chosen = services.find(s => String(s.id) === String(bookingServiceId));
                 const instructor = team.find(m => String(m.id) === String(bookingProfessionalId));
                 const instructorName = instructor?.name || chosen?.instructor_name || 'Instructor asignado';
+                const currentSlotCheck = checkBookingSlotTaken(bookingDate, bookingTime, chosen, bookingProfessionalId);
+                const recurringPreview = chosen ? calculateRecurringSessions({
+                  serviceName: chosen.name,
+                  billingPeriod: chosen.billing_period,
+                  schedule: chosen.schedule,
+                  startDate: bookingDate || todayKey,
+                  startTime: bookingTime || '18:00',
+                }) : [];
+
                 return (
                   <div className="full" style={{ background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '10px', padding: '12px 14px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', marginBottom: bookingSlots.length > 1 ? '10px' : '0' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', marginBottom: '8px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <span style={{ fontSize: '13px', fontWeight: 600, color: '#1e293b' }}>
                           👤 Instructor: <strong>{instructorName}</strong>
                         </span>
+                        {chosen?.schedule && (
+                          <span style={{ fontSize: '12px', color: '#64748b' }}>
+                            · 🕒 Horario: <strong>{chosen.schedule}</strong>
+                          </span>
+                        )}
                       </div>
-                      <div style={{ background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', borderRadius: '6px', padding: '4px 10px', fontSize: '12px', fontWeight: 700 }}>
-                        📅 {bookingDate} · 🕒 {bookingTime} hrs
+                      <div style={{
+                        background: currentSlotCheck.isTaken ? '#fef2f2' : '#eff6ff',
+                        color: currentSlotCheck.isTaken ? '#dc2626' : '#1d4ed8',
+                        border: currentSlotCheck.isTaken ? '1px solid #fca5a5' : '1px solid #bfdbfe',
+                        borderRadius: '6px',
+                        padding: '4px 10px',
+                        fontSize: '12px',
+                        fontWeight: 700
+                      }}>
+                        {currentSlotCheck.isTaken ? '⛔' : '📅'} Inicio: {bookingDate} · 🕒 {bookingTime} hrs
                       </div>
                     </div>
+
+                    {currentSlotCheck.isTaken && (
+                      <div style={{ background: '#fee2e2', border: '1px solid #f87171', borderRadius: '8px', padding: '8px 12px', margin: '8px 0', color: '#991b1b', fontSize: '12px', fontWeight: 600 }}>
+                        ⚠️ Este horario ya se encuentra tomado con {instructorName}. No es posible sobreponer otra clase en el mismo bloque. Por favor selecciona otro día u horario disponible.
+                      </div>
+                    )}
+
                     {bookingSlots.length > 1 && (
-                      <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '8px', marginTop: '4px' }}>
+                      <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '8px', marginTop: '4px', marginBottom: '8px' }}>
                         <span style={{ fontSize: '11px', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'block', marginBottom: '6px' }}>
-                          Días asignados a esta clase (haz clic para cambiar fecha):
+                          Elegir día de la primera sesión:
                         </span>
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
                           {bookingSlots.map((slot, idx) => {
+                            const slotStatus = checkBookingSlotTaken(slot.date, slot.time, chosen, bookingProfessionalId);
                             const isSelected = bookingDate === slot.date && bookingTime === slot.time;
                             return (
                               <button
                                 key={idx}
                                 type="button"
+                                disabled={slotStatus.isTaken}
                                 onClick={() => {
-                                  setBookingDate(slot.date);
-                                  setBookingTime(slot.time);
+                                  if (!slotStatus.isTaken) {
+                                    setBookingDate(slot.date);
+                                    setBookingTime(slot.time);
+                                  }
                                 }}
+                                title={slotStatus.isTaken ? (slotStatus.reason || 'Horario tomado') : 'Horario disponible'}
                                 style={{
-                                  background: isSelected ? '#18181b' : '#ffffff',
-                                  color: isSelected ? '#ffffff' : '#334155',
-                                  border: isSelected ? '1px solid #18181b' : '1px solid #cbd5e1',
+                                  background: slotStatus.isTaken ? '#f1f5f9' : isSelected ? '#18181b' : '#ffffff',
+                                  color: slotStatus.isTaken ? '#94a3b8' : isSelected ? '#ffffff' : '#334155',
+                                  border: slotStatus.isTaken ? '1px dashed #cbd5e1' : isSelected ? '1px solid #18181b' : '1px solid #cbd5e1',
                                   padding: '4px 10px',
                                   borderRadius: '6px',
                                   fontSize: '12px',
                                   fontWeight: 600,
-                                  cursor: 'pointer',
+                                  cursor: slotStatus.isTaken ? 'not-allowed' : 'pointer',
                                   display: 'inline-flex',
                                   alignItems: 'center',
                                   gap: '4px',
+                                  opacity: slotStatus.isTaken ? 0.65 : 1,
                                   transition: 'all 0.15s ease'
                                 }}
                               >
-                                <span>{isSelected ? '✓' : '•'}</span>
+                                <span>{slotStatus.isTaken ? '⛔' : isSelected ? '✓' : '•'}</span>
                                 <span>{slot.label} ({slot.date.slice(5)})</span>
+                                {slotStatus.isTaken && <small style={{ fontSize: '10px', color: '#ef4444' }}>· Tomado</small>}
                               </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {recurringPreview.length > 1 && (
+                      <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '8px', marginTop: '4px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                          <span style={{ fontSize: '11px', fontWeight: 700, color: '#047857', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                            ✓ Plan completo: Se agendarán las {recurringPreview.length} sesiones automáticamente
+                          </span>
+                          <span style={{ fontSize: '11px', fontWeight: 600, color: '#64748b' }}>
+                            Total: {recurringPreview.length} clases
+                          </span>
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '6px', maxHeight: '140px', overflowY: 'auto' }}>
+                          {recurringPreview.map((s, idx) => {
+                            const sStatus = checkBookingSlotTaken(s.date, s.time, chosen, bookingProfessionalId);
+                            return (
+                              <div
+                                key={idx}
+                                style={{
+                                  background: sStatus.isTaken ? '#fef2f2' : '#f0fdf4',
+                                  border: sStatus.isTaken ? '1px solid #fecaca' : '1px solid #bbf7d0',
+                                  borderRadius: '6px',
+                                  padding: '4px 8px',
+                                  fontSize: '11px',
+                                  color: sStatus.isTaken ? '#991b1b' : '#166534',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '4px'
+                                }}
+                              >
+                                <strong style={{ fontSize: '10px', background: sStatus.isTaken ? '#fee2e2' : '#dcfce7', borderRadius: '4px', padding: '1px 4px' }}>#{idx + 1}</strong>
+                                <span>{s.dayName} {s.date.slice(5)} · {s.time}</span>
+                                {sStatus.isTaken && <span style={{ marginLeft: 'auto', fontWeight: 700, fontSize: '9px', color: '#ef4444' }}>⛔ Tomado</span>}
+                              </div>
                             );
                           })}
                         </div>
@@ -3017,7 +3161,15 @@ function BookingsModule({ demo }: { demo: (message: string) => void }) {
             {formError && <div className="form-error" role="alert">{formError}</div>}
             <div className="modal-footer">
               <button type="button" onClick={() => setShowNew(false)}>Cancelar</button>
-              <button type="submit" disabled={saving || services.length === 0 || team.length === 0}>
+              <button
+                type="submit"
+                disabled={
+                  saving ||
+                  services.length === 0 ||
+                  team.length === 0 ||
+                  Boolean(bookingServiceId && checkBookingSlotTaken(bookingDate, bookingTime, services.find(s => String(s.id) === String(bookingServiceId)), bookingProfessionalId).isTaken)
+                }
+              >
                 {saving ? 'Guardando…' : 'Confirmar Cupo'}
               </button>
             </div>
@@ -5047,7 +5199,7 @@ function ClientsModule({ demo }: { demo: (message: string) => void }) {
             <p>Al registrar el pago, la mensualidad pasará automáticamente a estado <strong>Al día 🟢</strong> y se generará el recibo.</p>
             <div className="form-grid">
               <label>Monto pagado (CLP)
-                <input name="amount" type="number" required defaultValue={payingStudent.monthly_fee || 35000} step="1000" />
+                <input name="amount" type="number" required defaultValue={payingStudent.monthly_fee || 35000} step="any" />
               </label>
               <label>Período cubierto
                 <input name="period" required defaultValue={new Intl.DateTimeFormat('es-CL', { month: 'long', year: 'numeric' }).format(new Date())} placeholder="Ej: Octubre 2026" />
@@ -5284,7 +5436,7 @@ function ClientsModule({ demo }: { demo: (message: string) => void }) {
                       name="monthlyFee"
                       type="number"
                       min="0"
-                      step="1000"
+                      step="any"
                       value={monthlyFeeInput}
                       onChange={e => setMonthlyFeeInput(e.target.value)}
                       placeholder="45000"
@@ -6673,7 +6825,7 @@ function PaymentsModule({ demo }: { demo: (message: string) => void }) {
                   name="amount"
                   type="number"
                   min="1"
-                  step="1000"
+                  step="any"
                   required
                   value={payingAmount}
                   onChange={(e) => setPayingAmount(e.target.value)}
@@ -6997,7 +7149,7 @@ function PaymentsModule({ demo }: { demo: (message: string) => void }) {
                 <input
                   type="number"
                   min="1"
-                  step="1000"
+                  step="any"
                   required
                   placeholder="35000"
                   value={debtorAmount}
@@ -7206,12 +7358,15 @@ function ServicesModule({ demo }: { demo: (message: string) => void }) {
     '21:00', '21:30', '22:00', '22:30', '23:00'
   ];
 
+  const [formDuration, setFormDuration] = useState<number>(60);
   const [formSchedule, setFormSchedule] = useState('');
   const [scheduleSlots, setScheduleSlots] = useState<string[]>([]);
   const [selectedDays, setSelectedDays] = useState<string[]>(['Lun', 'Mié', 'Vie']);
   const [slotStart, setSlotStart] = useState('18:30');
   const [slotEnd, setSlotEnd] = useState('19:30');
   const [editingSlotIndex, setEditingSlotIndex] = useState<number | null>(0);
+  const [scheduleType, setScheduleType] = useState<'same_time' | 'different_times'>('same_time');
+  const [perDayTimes, setPerDayTimes] = useState<Record<string, { start: string; end: string }>>({});
 
   function parseSlotStringToComponents(slotStr: string): { days: string[]; start: string; end: string } {
     const result = {
@@ -7237,28 +7392,32 @@ function ServicesModule({ demo }: { demo: (message: string) => void }) {
       }
     }
 
-    const lower = slotStr.toLowerCase();
-    if (lower.includes('todos los d') || lower.includes('todos los dias')) {
+    const norm = slotStr
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '');
+
+    if (norm.includes('todos los d') || norm.includes('todos los dias')) {
       result.days = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
       return result;
     }
-    if (lower.includes('lunes a viernes') || lower.includes('lun a vie')) {
+    if (norm.includes('lunes a viernes') || norm.includes('lun a vie')) {
       result.days = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie'];
       return result;
     }
-    if (lower.includes('fines de semana') || lower.includes('fin de semana') || lower.includes('sáb y dom') || lower.includes('sab y dom')) {
+    if (norm.includes('fines de semana') || norm.includes('fin de semana') || norm.includes('sab y dom') || norm.includes('sáb y dom')) {
       result.days = ['Sáb', 'Dom'];
       return result;
     }
 
     const detectedDays: string[] = [];
-    if (lower.match(/\blun(?:es)?\b/)) detectedDays.push('Lun');
-    if (lower.match(/\bmar(?:tes)?\b/)) detectedDays.push('Mar');
-    if (lower.match(/\bmi[eé](?:rcoles)?\b/)) detectedDays.push('Mié');
-    if (lower.match(/\bjue(?:ves)?\b/)) detectedDays.push('Jue');
-    if (lower.match(/\bvie(?:rnes)?\b/)) detectedDays.push('Vie');
-    if (lower.match(/\bs[aá]b(?:ado|ados)?\b/)) detectedDays.push('Sáb');
-    if (lower.match(/\bdom(?:ingo|ingos)?\b/)) detectedDays.push('Dom');
+    if (norm.match(/\blun(?:es)?\b/)) detectedDays.push('Lun');
+    if (norm.match(/\bmar(?:tes)?\b/)) detectedDays.push('Mar');
+    if (norm.match(/\bmie(?:rcoles)?\b/)) detectedDays.push('Mié');
+    if (norm.match(/\bjue(?:ves)?\b/)) detectedDays.push('Jue');
+    if (norm.match(/\bvie(?:rnes)?\b/)) detectedDays.push('Vie');
+    if (norm.match(/\bsab(?:ado|ados)?\b/)) detectedDays.push('Sáb');
+    if (norm.match(/\bdom(?:ingo|ingos)?\b/)) detectedDays.push('Dom');
 
     if (detectedDays.length > 0) {
       result.days = detectedDays;
@@ -7311,10 +7470,91 @@ function ServicesModule({ demo }: { demo: (message: string) => void }) {
     }
   }
 
+  function handleDurationChange(newDuration: number) {
+    setFormDuration(newDuration);
+    const newEnd = addMinutesToTime(slotStart, newDuration);
+    setSlotEnd(newEnd);
+
+    if (scheduleType === 'different_times') {
+      const updatedTimes = { ...perDayTimes };
+      Object.keys(updatedTimes).forEach(d => {
+        updatedTimes[d] = {
+          start: updatedTimes[d].start,
+          end: addMinutesToTime(updatedTimes[d].start, newDuration)
+        };
+      });
+      setPerDayTimes(updatedTimes);
+      const dayOrder = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+      const sorted = [...selectedDays].sort((a, b) => dayOrder.indexOf(a) - dayOrder.indexOf(b));
+      const nextSlots = sorted.map(d => `${d} ${updatedTimes[d]?.start || slotStart} - ${updatedTimes[d]?.end || newEnd}`);
+      setScheduleSlots(nextSlots);
+      setFormSchedule(nextSlots.join(' / '));
+    } else {
+      syncSlotWithSelection(selectedDays, slotStart, newEnd, editingSlotIndex);
+    }
+  }
+
+  function handlePerDayStartChange(dayKey: string, nextStart: string) {
+    const nextEnd = addMinutesToTime(nextStart, formDuration);
+    handlePerDayChange(dayKey, nextStart, nextEnd);
+  }
+
+  function handlePerDayChange(dayKey: string, nextStart: string, nextEnd: string) {
+    let validEnd = nextEnd;
+    if (calculateMinutesBetween(nextStart, nextEnd) <= 0) {
+      validEnd = addMinutesToTime(nextStart, formDuration);
+    }
+    const updated = {
+      ...perDayTimes,
+      [dayKey]: { start: nextStart, end: validEnd }
+    };
+    setPerDayTimes(updated);
+    const dayOrder = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+    const sorted = [...selectedDays].sort((a, b) => dayOrder.indexOf(a) - dayOrder.indexOf(b));
+    const nextSlots = sorted.map(d => {
+      const s = updated[d]?.start || slotStart;
+      const e = updated[d]?.end || addMinutesToTime(s, formDuration);
+      return `${d} ${s} - ${e}`;
+    });
+    setScheduleSlots(nextSlots);
+    setFormSchedule(nextSlots.join(' / '));
+  }
+
+  function switchToDifferentTimes(days = selectedDays) {
+    setScheduleType('different_times');
+    const updatedTimes = { ...perDayTimes };
+    days.forEach(d => {
+      if (!updatedTimes[d]) {
+        updatedTimes[d] = { start: slotStart, end: addMinutesToTime(slotStart, formDuration) };
+      } else if (calculateMinutesBetween(updatedTimes[d].start, updatedTimes[d].end) <= 0) {
+        updatedTimes[d].end = addMinutesToTime(updatedTimes[d].start, formDuration);
+      }
+    });
+    setPerDayTimes(updatedTimes);
+    const dayOrder = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+    const sorted = [...days].sort((a, b) => dayOrder.indexOf(a) - dayOrder.indexOf(b));
+    const nextSlots = sorted.map(d => `${d} ${updatedTimes[d]?.start || slotStart} - ${updatedTimes[d]?.end || addMinutesToTime(slotStart, formDuration)}`);
+    setScheduleSlots(nextSlots);
+    setFormSchedule(nextSlots.join(' / '));
+    setEditingSlotIndex(null);
+  }
+
+  function switchToSameTime(days = selectedDays) {
+    setScheduleType('same_time');
+    const daysText = formatDaysSummary(days);
+    const calculatedEnd = addMinutesToTime(slotStart, formDuration);
+    setSlotEnd(calculatedEnd);
+    const newSlot = `${daysText} ${slotStart} - ${calculatedEnd}`;
+    setScheduleSlots([newSlot]);
+    setFormSchedule(newSlot);
+    setEditingSlotIndex(0);
+  }
+
   function addCurrentSlot() {
     if (selectedDays.length === 0) return;
     const daysText = formatDaysSummary(selectedDays);
-    const newSlot = `${daysText} ${slotStart} - ${slotEnd}`;
+    const validEnd = calculateMinutesBetween(slotStart, slotEnd) > 0 ? slotEnd : addMinutesToTime(slotStart, formDuration);
+    const newSlot = `${daysText} ${slotStart} - ${validEnd}`;
     if (editingSlotIndex !== null && editingSlotIndex >= 0 && editingSlotIndex < scheduleSlots.length) {
       const nextSlots = [...scheduleSlots];
       nextSlots[editingSlotIndex] = newSlot;
@@ -7342,20 +7582,49 @@ function ServicesModule({ demo }: { demo: (message: string) => void }) {
       ? selectedDays.filter(d => d !== dayKey)
       : [...selectedDays, dayKey];
     setSelectedDays(nextDays);
-    syncSlotWithSelection(nextDays, slotStart, slotEnd, editingSlotIndex);
+    if (scheduleType === 'different_times') {
+      const updatedTimes = { ...perDayTimes };
+      if (!updatedTimes[dayKey]) {
+        updatedTimes[dayKey] = { start: slotStart, end: addMinutesToTime(slotStart, formDuration) };
+      }
+      setPerDayTimes(updatedTimes);
+      const dayOrder = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+      const sorted = [...nextDays].sort((a, b) => dayOrder.indexOf(a) - dayOrder.indexOf(b));
+      const nextSlots = sorted.map(d => `${d} ${updatedTimes[d]?.start || slotStart} - ${updatedTimes[d]?.end || addMinutesToTime(slotStart, formDuration)}`);
+      setScheduleSlots(nextSlots);
+      setFormSchedule(nextSlots.join(' / '));
+    } else {
+      syncSlotWithSelection(nextDays, slotStart, slotEnd, editingSlotIndex);
+    }
   }
 
   function handleSelectGroup(days: string[]) {
     setSelectedDays(days);
-    syncSlotWithSelection(days, slotStart, slotEnd, editingSlotIndex);
+    if (scheduleType === 'different_times') {
+      const updatedTimes = { ...perDayTimes };
+      days.forEach(d => {
+        if (!updatedTimes[d]) updatedTimes[d] = { start: slotStart, end: addMinutesToTime(slotStart, formDuration) };
+      });
+      setPerDayTimes(updatedTimes);
+      const dayOrder = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+      const sorted = [...days].sort((a, b) => dayOrder.indexOf(a) - dayOrder.indexOf(b));
+      const nextSlots = sorted.map(d => `${d} ${updatedTimes[d]?.start || slotStart} - ${updatedTimes[d]?.end || addMinutesToTime(slotStart, formDuration)}`);
+      setScheduleSlots(nextSlots);
+      setFormSchedule(nextSlots.join(' / '));
+    } else {
+      syncSlotWithSelection(days, slotStart, slotEnd, editingSlotIndex);
+    }
   }
 
   function handleStartChange(newStart: string) {
     setSlotStart(newStart);
-    syncSlotWithSelection(selectedDays, newStart, slotEnd, editingSlotIndex);
+    const newEnd = addMinutesToTime(newStart, formDuration);
+    setSlotEnd(newEnd);
+    syncSlotWithSelection(selectedDays, newStart, newEnd, editingSlotIndex);
   }
 
   function handleEndChange(newEnd: string) {
+    if (calculateMinutesBetween(slotStart, newEnd) <= 0) return;
     setSlotEnd(newEnd);
     syncSlotWithSelection(selectedDays, slotStart, newEnd, editingSlotIndex);
   }
@@ -7369,12 +7638,17 @@ function ServicesModule({ demo }: { demo: (message: string) => void }) {
     const comp = parseSlotStringToComponents(presetText);
     if (comp.days.length > 0) setSelectedDays(comp.days);
     if (comp.start) setSlotStart(comp.start);
-    if (comp.end) setSlotEnd(comp.end);
+    if (comp.end && calculateMinutesBetween(comp.start, comp.end) > 0) {
+      setSlotEnd(comp.end);
+    } else if (comp.start) {
+      setSlotEnd(addMinutesToTime(comp.start, formDuration));
+    }
     setEditingSlotIndex(null);
   }
 
   function openNewService() {
     setEditing(null);
+    setFormDuration(60);
     const defaultProf = team.filter(m => Boolean(m.active))[0]?.id ? String(team.filter(m => Boolean(m.active))[0].id) : (team[0] ? String(team[0].id) : '');
     setFormProfessionalId(defaultProf);
     const defaultSlot = 'Lun, Mié y Vie 18:30 - 19:30';
@@ -7384,12 +7658,16 @@ function ServicesModule({ demo }: { demo: (message: string) => void }) {
     setSlotStart('18:30');
     setSlotEnd('19:30');
     setEditingSlotIndex(0);
+    setScheduleType('same_time');
+    setPerDayTimes({});
     setShowForm(true);
     setError('');
   }
 
   function openEditService(s: Service) {
     setEditing(s);
+    const sDuration = s.duration_minutes || 60;
+    setFormDuration(sDuration);
     setFormClassType(s.class_type || 'grupal');
     setFormBillingPeriod(s.billing_period || 'mensual');
     const foundByName = team.find(m => m.name.toLowerCase() === (s.instructor_name || '').toLowerCase());
@@ -7397,21 +7675,57 @@ function ServicesModule({ demo }: { demo: (message: string) => void }) {
     setFormProfessionalId(profId);
     const rawSched = s.schedule || '';
     setFormSchedule(rawSched);
-    const parsed = rawSched ? rawSched.split(' / ').map(x => x.trim()).filter(Boolean) : [];
+    const parsed = rawSched ? splitScheduleString(rawSched) : [];
     setScheduleSlots(parsed);
-    setEditingSlotIndex(parsed.length > 0 ? 0 : null);
 
-    const slotToParse = parsed.length > 0 ? parsed[0] : rawSched;
-    if (slotToParse) {
-      const comp = parseSlotStringToComponents(slotToParse);
-      if (comp.days.length > 0) setSelectedDays(comp.days);
-      else setSelectedDays(['Lun', 'Mié', 'Vie']);
-      if (comp.start) setSlotStart(comp.start);
-      if (comp.end) setSlotEnd(comp.end);
+    if (parsed.length > 1) {
+      const detectedDays: string[] = [];
+      const detectedTimes: Record<string, { start: string; end: string }> = {};
+      let hasDistinctTimes = false;
+      let firstStart = '';
+
+      parsed.forEach(p => {
+        const comp = parseSlotStringToComponents(p);
+        let validEnd = comp.end;
+        if (calculateMinutesBetween(comp.start, comp.end) <= 0) {
+          validEnd = addMinutesToTime(comp.start, sDuration);
+        }
+        comp.days.forEach(d => {
+          if (!detectedDays.includes(d)) detectedDays.push(d);
+          detectedTimes[d] = { start: comp.start, end: validEnd };
+          if (!firstStart) firstStart = comp.start;
+          else if (firstStart !== comp.start) hasDistinctTimes = true;
+        });
+      });
+
+      if (detectedDays.length > 0) setSelectedDays(detectedDays);
+      setPerDayTimes(detectedTimes);
+      if (hasDistinctTimes || parsed.length > 1) {
+        setScheduleType('different_times');
+      } else {
+        setScheduleType('same_time');
+      }
+      setEditingSlotIndex(null);
     } else {
-      setSelectedDays(['Lun', 'Mié', 'Vie']);
-      setSlotStart('18:30');
-      setSlotEnd('19:30');
+      setScheduleType('same_time');
+      setPerDayTimes({});
+      setEditingSlotIndex(parsed.length > 0 ? 0 : null);
+      const slotToParse = parsed.length > 0 ? parsed[0] : rawSched;
+      if (slotToParse) {
+        const comp = parseSlotStringToComponents(slotToParse);
+        if (comp.days.length > 0) setSelectedDays(comp.days);
+        else setSelectedDays(['Lun', 'Mié', 'Vie']);
+        if (comp.start) setSlotStart(comp.start);
+        if (comp.end && calculateMinutesBetween(comp.start, comp.end) > 0) {
+          setSlotEnd(comp.end);
+        } else if (comp.start) {
+          setSlotEnd(addMinutesToTime(comp.start, sDuration));
+        }
+      } else {
+        setSelectedDays(['Lun', 'Mié', 'Vie']);
+        setSlotStart('18:30');
+        setSlotEnd(addMinutesToTime('18:30', sDuration));
+      }
     }
 
     setShowForm(true);
@@ -7476,9 +7790,36 @@ function ServicesModule({ demo }: { demo: (message: string) => void }) {
     if (!finalSchedule && scheduleSlots.length > 0) {
       finalSchedule = scheduleSlots.join(' / ');
     } else if (!finalSchedule && selectedDays.length > 0) {
-      const daysText = formatDaysSummary(selectedDays);
-      finalSchedule = `${daysText} ${slotStart} - ${slotEnd}`;
+      if (scheduleType === 'different_times') {
+        const dayOrder = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+        const sorted = [...selectedDays].sort((a, b) => dayOrder.indexOf(a) - dayOrder.indexOf(b));
+        finalSchedule = sorted.map(d => `${d} ${perDayTimes[d]?.start || slotStart} - ${perDayTimes[d]?.end || slotEnd}`).join(' / ');
+      } else {
+        const daysText = formatDaysSummary(selectedDays);
+        finalSchedule = `${daysText} ${slotStart} - ${slotEnd}`;
+      }
     }
+    // Validar que cada bloque no tenga horas hacia atrás y que coincida con la duración de la clase
+    if (finalSchedule) {
+      const slotsToCheck = splitScheduleString(finalSchedule);
+      for (const slot of slotsToCheck) {
+        const comp = parseSlotStringToComponents(slot);
+        if (comp.start && comp.end) {
+          const diff = calculateMinutesBetween(comp.start, comp.end);
+          if (diff <= 0) {
+            setError(`Error en horario "${slot}": La hora de término (${comp.end}) no puede ser anterior o igual a la hora de inicio (${comp.start}).`);
+            setSaving(false);
+            return;
+          }
+          if (diff !== formDuration) {
+            setError(`Error en bloque "${slot}": Dura ${diff} minutos, pero la clase está configurada para ${formDuration} minutos. El bloque debe coincidir con la duración de la clase.`);
+            setSaving(false);
+            return;
+          }
+        }
+      }
+    }
+
     payload.schedule = finalSchedule || null;
 
     try {
@@ -7765,7 +8106,7 @@ function ServicesModule({ demo }: { demo: (message: string) => void }) {
       {/* Modal: Crear / Editar Clase */}
       {showForm && (
         <div className="modal-backdrop">
-          <form className="new-booking-modal service-form" onSubmit={save}>
+          <form className="new-booking-modal service-form" key={editing ? `service-edit-${editing.id}` : 'service-new'} onSubmit={save}>
             <button
               type="button"
               className="close-modal"
@@ -7836,7 +8177,11 @@ function ServicesModule({ demo }: { demo: (message: string) => void }) {
               </label>
 
               <label>Duración (minutos)
-                <select name="durationMinutes" defaultValue={editing?.duration_minutes ?? 60}>
+                <select
+                  name="durationMinutes"
+                  value={formDuration}
+                  onChange={e => handleDurationChange(Number(e.target.value))}
+                >
                   <option value="30">30 minutos</option>
                   <option value="45">45 minutos</option>
                   <option value="60">60 minutos</option>
@@ -7856,7 +8201,7 @@ function ServicesModule({ demo }: { demo: (message: string) => void }) {
                   name="priceClp"
                   type="number"
                   min="0"
-                  step="1000"
+                  step="any"
                   required
                   defaultValue={editing?.price_clp ?? (formBillingPeriod === 'anual' ? 350000 : 35000)}
                 />
@@ -7983,101 +8328,207 @@ function ServicesModule({ demo }: { demo: (message: string) => void }) {
                   </div>
                 </div>
 
+                {/* Modalidad de horario: Mismo horario vs Horarios distintos por día */}
+                {selectedDays.length > 1 && (
+                  <div style={{ background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '10px', padding: '10px 14px' }}>
+                    <div style={{ fontSize: '12px', fontWeight: 700, color: '#1e293b', marginBottom: '6px' }}>
+                      🕒 Modalidad de horario para los {selectedDays.length} días seleccionados:
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                      <button
+                        type="button"
+                        onClick={() => switchToSameTime()}
+                        style={{
+                          padding: '6px 12px',
+                          borderRadius: '8px',
+                          fontSize: '12px',
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                          background: scheduleType === 'same_time' ? '#1e293b' : '#ffffff',
+                          color: scheduleType === 'same_time' ? '#ffffff' : '#475569',
+                          border: scheduleType === 'same_time' ? '1px solid #1e293b' : '1px solid #cbd5e1',
+                          transition: 'all 0.15s ease'
+                        }}
+                      >
+                        {scheduleType === 'same_time' ? '✓ ' : ''}Mismo horario todos los días
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => switchToDifferentTimes()}
+                        style={{
+                          padding: '6px 12px',
+                          borderRadius: '8px',
+                          fontSize: '12px',
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                          background: scheduleType === 'different_times' ? '#2563eb' : '#ffffff',
+                          color: scheduleType === 'different_times' ? '#ffffff' : '#2563eb',
+                          border: scheduleType === 'different_times' ? '1px solid #2563eb' : '1px solid #93c5fd',
+                          boxShadow: scheduleType === 'different_times' ? '0 1px 3px rgba(37,99,235,0.2)' : 'none',
+                          transition: 'all 0.15s ease'
+                        }}
+                      >
+                        {scheduleType === 'different_times' ? '✓ ' : '＋ '}Horarios distintos por día (ej: Lunes 15:00 y Miércoles 17:00)
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {/* 2. Rango de Horas y Botón Agregar */}
-                <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '12px 14px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                    <span style={{ fontSize: '12px', fontWeight: 600, color: '#334155' }}>
-                      2. Rango de hora del bloque:
-                    </span>
-                    {editingSlotIndex !== null && scheduleSlots.length > 1 && (
-                      <span style={{ fontSize: '11px', background: '#dbeafe', color: '#1e40af', padding: '1px 7px', borderRadius: '6px', fontWeight: 600 }}>
-                        Editando bloque #{editingSlotIndex + 1}
+                {scheduleType === 'different_times' && selectedDays.length > 1 ? (
+                  <div style={{ background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '10px', padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontSize: '12px', fontWeight: 700, color: '#0369a1' }}>
+                        2. Configura el horario específico para cada día:
                       </span>
-                    )}
+                      <span style={{ fontSize: '11px', background: '#dbeafe', color: '#1e40af', padding: '1px 8px', borderRadius: '6px', fontWeight: 600 }}>
+                        {selectedDays.length} días configurados
+                      </span>
+                    </div>
+                    {selectedDays.map(dayKey => {
+                      const dayName = DAYS_OF_WEEK.find(d => d.key === dayKey)?.label || dayKey;
+                      const dayStart = perDayTimes[dayKey]?.start || slotStart;
+                      const dayEnd = perDayTimes[dayKey]?.end || slotEnd;
+                      return (
+                        <div key={`per-day-${dayKey}`} style={{ background: '#ffffff', border: '1px solid #e0f2fe', borderRadius: '8px', padding: '10px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '10px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: '110px' }}>
+                            <span style={{ fontSize: '16px' }}>🗓️</span>
+                            <strong style={{ fontSize: '13px', color: '#0f172a' }}>{dayName}</strong>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                            <div>
+                              <label style={{ fontSize: '11px', fontWeight: 600, color: '#64748b', display: 'block', marginBottom: '2px' }}>Hora Inicio</label>
+                              <select
+                                value={dayStart}
+                                onChange={e => handlePerDayStartChange(dayKey, e.target.value)}
+                                style={{ height: '36px', padding: '0 8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', fontWeight: 600, background: '#ffffff', color: '#0f172a' }}
+                              >
+                                {TIME_OPTIONS.slice(0, -1).map(t => (
+                                  <option key={`pds-${t}`} value={t}>{t} hrs</option>
+                                ))}
+                              </select>
+                            </div>
+                            <span style={{ alignSelf: 'flex-end', paddingBottom: '8px', color: '#94a3b8', fontWeight: 700 }}>a</span>
+                            <div>
+                              <label style={{ fontSize: '11px', fontWeight: 600, color: '#64748b', display: 'block', marginBottom: '2px' }}>Hora Término ({formDuration} min)</label>
+                              <select
+                                value={dayEnd}
+                                onChange={e => handlePerDayChange(dayKey, dayStart, e.target.value)}
+                                style={{ height: '36px', padding: '0 8px', borderRadius: '6px', border: '1px solid #cbd5e1', fontSize: '13px', fontWeight: 600, background: '#ffffff', color: '#0f172a' }}
+                              >
+                                {(() => {
+                                  const validOptions = TIME_OPTIONS.filter(t => t > dayStart);
+                                  const expectedEnd = addMinutesToTime(dayStart, formDuration);
+                                  const list = validOptions.includes(expectedEnd) ? validOptions : Array.from(new Set([...validOptions, expectedEnd])).sort();
+                                  return list.map(t => (
+                                    <option key={`pde-${t}`} value={t}>{t} hrs {t === expectedEnd ? `(${formDuration} min)` : ''}</option>
+                                  ));
+                                })()}
+                              </select>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
-                  <div className="schedule-time-row" style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'flex-end' }}>
-                    <div style={{ flex: '1 1 110px' }}>
-                      <label style={{ fontSize: '11px', fontWeight: 600, color: '#64748b', display: 'block', marginBottom: '4px' }}>
-                        Hora Inicio
-                      </label>
-                      <select
-                        value={slotStart}
-                        onChange={e => handleStartChange(e.target.value)}
+                ) : (
+                  <div style={{ background: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '10px', padding: '12px 14px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                      <span style={{ fontSize: '12px', fontWeight: 600, color: '#334155' }}>
+                        2. Rango de hora del bloque:
+                      </span>
+                      {editingSlotIndex !== null && scheduleSlots.length > 1 && (
+                        <span style={{ fontSize: '11px', background: '#dbeafe', color: '#1e40af', padding: '1px 7px', borderRadius: '6px', fontWeight: 600 }}>
+                          Editando bloque #{editingSlotIndex + 1}
+                        </span>
+                      )}
+                    </div>
+                    <div className="schedule-time-row" style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', alignItems: 'flex-end' }}>
+                      <div style={{ flex: '1 1 110px' }}>
+                        <label style={{ fontSize: '11px', fontWeight: 600, color: '#64748b', display: 'block', marginBottom: '4px' }}>
+                          Hora Inicio
+                        </label>
+                        <select
+                          value={slotStart}
+                          onChange={e => handleStartChange(e.target.value)}
+                          style={{
+                            width: '100%',
+                            height: '40px',
+                            border: '1px solid #cbd5e1',
+                            borderRadius: '8px',
+                            padding: '0 10px',
+                            fontSize: '14px',
+                            fontWeight: 500,
+                            background: '#ffffff',
+                            color: '#0f172a',
+                          }}
+                        >
+                          {(() => {
+                            const list = TIME_OPTIONS.includes(slotStart) ? TIME_OPTIONS.slice(0, -1) : Array.from(new Set([slotStart, ...TIME_OPTIONS.slice(0, -1)])).sort();
+                            return list.map(t => (
+                              <option key={`start-${t}`} value={t}>{t} hrs</option>
+                            ));
+                          })()}
+                        </select>
+                      </div>
+
+                      <div style={{ flex: '1 1 110px' }}>
+                        <label style={{ fontSize: '11px', fontWeight: 600, color: '#64748b', display: 'block', marginBottom: '4px' }}>
+                          Hora Término ({formDuration} min)
+                        </label>
+                        <select
+                          value={slotEnd}
+                          onChange={e => handleEndChange(e.target.value)}
+                          style={{
+                            width: '100%',
+                            height: '40px',
+                            border: '1px solid #cbd5e1',
+                            borderRadius: '8px',
+                            padding: '0 10px',
+                            fontSize: '14px',
+                            fontWeight: 500,
+                            background: '#ffffff',
+                            color: '#0f172a',
+                          }}
+                        >
+                          {(() => {
+                            const validOptions = TIME_OPTIONS.filter(t => t > slotStart);
+                            const expectedEnd = addMinutesToTime(slotStart, formDuration);
+                            const list = validOptions.includes(expectedEnd) ? validOptions : Array.from(new Set([...validOptions, expectedEnd])).sort();
+                            return list.map(t => (
+                              <option key={`end-${t}`} value={t}>{t} hrs {t === expectedEnd ? `(${formDuration} min)` : ''}</option>
+                            ));
+                          })()}
+                        </select>
+                      </div>
+
+                      <button
+                        type="button"
+                        className="schedule-add-btn"
+                        onClick={addCurrentSlot}
+                        disabled={selectedDays.length === 0}
                         style={{
-                          width: '100%',
                           height: '40px',
-                          border: '1px solid #cbd5e1',
+                          padding: '0 18px',
+                          background: selectedDays.length === 0 ? '#94a3b8' : '#18181b',
+                          color: '#ffffff',
+                          border: 'none',
                           borderRadius: '8px',
-                          padding: '0 10px',
-                          fontSize: '14px',
-                          fontWeight: 500,
-                          background: '#ffffff',
-                          color: '#0f172a',
+                          fontSize: '13px',
+                          fontWeight: 600,
+                          cursor: selectedDays.length === 0 ? 'not-allowed' : 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          flexShrink: 0,
                         }}
                       >
-                        {(() => {
-                          const list = TIME_OPTIONS.includes(slotStart) ? TIME_OPTIONS.slice(0, -1) : Array.from(new Set([slotStart, ...TIME_OPTIONS.slice(0, -1)])).sort();
-                          return list.map(t => (
-                            <option key={`start-${t}`} value={t}>{t} hrs</option>
-                          ));
-                        })()}
-                      </select>
+                        <span>{editingSlotIndex !== null && scheduleSlots.length > 1 ? '✓' : '＋'}</span>
+                        {editingSlotIndex !== null && scheduleSlots.length > 1 ? 'Actualizar bloque' : 'Agregar bloque a horario'}
+                      </button>
                     </div>
-
-                    <div style={{ flex: '1 1 110px' }}>
-                      <label style={{ fontSize: '11px', fontWeight: 600, color: '#64748b', display: 'block', marginBottom: '4px' }}>
-                        Hora Término
-                      </label>
-                      <select
-                        value={slotEnd}
-                        onChange={e => handleEndChange(e.target.value)}
-                        style={{
-                          width: '100%',
-                          height: '40px',
-                          border: '1px solid #cbd5e1',
-                          borderRadius: '8px',
-                          padding: '0 10px',
-                          fontSize: '14px',
-                          fontWeight: 500,
-                          background: '#ffffff',
-                          color: '#0f172a',
-                        }}
-                      >
-                        {(() => {
-                          const list = TIME_OPTIONS.includes(slotEnd) ? TIME_OPTIONS.slice(1) : Array.from(new Set([slotEnd, ...TIME_OPTIONS.slice(1)])).sort();
-                          return list.map(t => (
-                            <option key={`end-${t}`} value={t}>{t} hrs</option>
-                          ));
-                        })()}
-                      </select>
-                    </div>
-
-                    <button
-                      type="button"
-                      className="schedule-add-btn"
-                      onClick={addCurrentSlot}
-                      disabled={selectedDays.length === 0}
-                      style={{
-                        height: '40px',
-                        padding: '0 18px',
-                        background: selectedDays.length === 0 ? '#94a3b8' : '#18181b',
-                        color: '#ffffff',
-                        border: 'none',
-                        borderRadius: '8px',
-                        fontSize: '13px',
-                        fontWeight: 600,
-                        cursor: selectedDays.length === 0 ? 'not-allowed' : 'pointer',
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '6px',
-                        flexShrink: 0,
-                      }}
-                    >
-                      <span>{editingSlotIndex !== null && scheduleSlots.length > 1 ? '✓' : '＋'}</span>
-                      {editingSlotIndex !== null && scheduleSlots.length > 1 ? 'Actualizar bloque' : 'Agregar bloque a horario'}
-                    </button>
                   </div>
-                </div>
+                )}
 
                 {/* 3. Bloques asignados */}
                 <div>

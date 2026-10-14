@@ -33,3 +33,25 @@ export function parseChileDateTime(dateStr: string, timeStr: string): Date {
   const offsetMs = guessUtc.getTime() - asIfUtc.getTime();
   return new Date(guessUtc.getTime() + offsetMs);
 }
+
+export const chileDateParts = (value: Date) =>
+  Object.fromEntries(
+    new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Santiago',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    })
+      .formatToParts(value)
+      .filter((p) => p.type !== 'literal')
+      .map((p) => [p.type, p.value])
+  );
+
+export const localChileDateKey = (date: Date): string => {
+  const p = chileDateParts(date);
+  return `${p.year}-${p.month}-${p.day}`;
+};
+

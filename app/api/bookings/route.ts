@@ -3,6 +3,7 @@ import { getChatGPTUser } from '../../chatgpt-auth';
 import { getSupabase } from '../../lib/supabase';
 import { parseChileDateTime } from '../../lib/dates';
 import { getBusinessForUser } from '../../lib/tenant';
+import { calculateRecurringSessions } from '../../lib/recurring';
 
 async function requireApiUser() {
   const user = await getChatGPTUser();
@@ -118,7 +119,7 @@ export async function POST(request: Request) {
 
   const { data: serviceRow } = await supabase
     .from('services')
-    .select('id, name, class_type, capacity, duration_minutes, price_clp')
+    .select('id, name, class_type, capacity, duration_minutes, price_clp, billing_period, schedule')
     .eq('id', serviceId)
     .eq('business_id', business.id)
     .eq('active', true)
@@ -136,46 +137,7 @@ export async function POST(request: Request) {
 
   if (!professional) return NextResponse.json({ error: 'El instructor no existe o no está activo.' }, { status: 400 });
 
-  const start = parseChileDateTime(date, time);
-  if (Number.isNaN(start.getTime())) return NextResponse.json({ error: 'Fecha u hora inválida.' }, { status: 400 });
-  const startsAtIso = start.toISOString();
-  const ends = new Date(start.getTime() + serviceRow.duration_minutes * 60 * 1000);
-  const endsAtIso = ends.toISOString();
-
-  // Check capacity limit
-  const { count: enrolledCount } = await supabase
-    .from('bookings')
-    .select('id', { count: 'exact', head: true })
-    .eq('service_id', serviceRow.id)
-    .eq('starts_at', startsAtIso)
-    .neq('status', 'cancelled');
-
-  const currentEnrolled = enrolledCount ?? 0;
-  const maxCapacity = serviceRow.class_type === 'grupal' ? (serviceRow.capacity || 10) : 1;
-
-  if (currentEnrolled >= maxCapacity) {
-    return NextResponse.json({
-      error: `¡Cupos agotados! Esta clase tiene una capacidad máxima de ${maxCapacity} alumnos y ya cuenta con ${currentEnrolled} inscritos.`,
-    }, { status: 409 });
-  }
-
-  // Check conflict: instructor cannot teach another class at the same time
-  const { data: conflict } = await supabase
-    .from('bookings')
-    .select('id')
-    .eq('professional_id', professional.id)
-    .neq('service_id', serviceRow.id)
-    .neq('status', 'cancelled')
-    .lt('starts_at', endsAtIso)
-    .gt('ends_at', startsAtIso)
-    .limit(1)
-    .maybeSingle();
-
-  if (conflict) {
-    return NextResponse.json({ error: 'El instructor ya tiene otra clase agendada en ese mismo bloque horario.' }, { status: 409 });
-  }
-
-  // Resolve Customer
+  // Resolve Customer first
   let customerId = customerIdInput;
   if (!customerId) {
     if (!customerName || !/^\S+@\S+\.\S+$/.test(customerEmail)) {
@@ -219,20 +181,6 @@ export async function POST(request: Request) {
 
   if (!customerId) return NextResponse.json({ error: 'Error al asociar alumno.' }, { status: 500 });
 
-  // Check if student is already booked for this exact session
-  const { data: alreadyBooked } = await supabase
-    .from('bookings')
-    .select('id')
-    .eq('service_id', serviceRow.id)
-    .eq('customer_id', customerId)
-    .eq('starts_at', startsAtIso)
-    .neq('status', 'cancelled')
-    .maybeSingle();
-
-  if (alreadyBooked) {
-    return NextResponse.json({ error: 'Este alumno ya está inscrito en esta clase.' }, { status: 409 });
-  }
-
   const { data: customer } = await supabase
     .from('customers')
     .select('id, name, phone, email, membership_status')
@@ -242,32 +190,144 @@ export async function POST(request: Request) {
   const isIncludedInPlan = customer?.membership_status === 'active';
   const paymentStatus = isIncludedInPlan ? 'paid' : 'unpaid';
 
-  const { data: inserted, error: insertError } = await supabase
-    .from('bookings')
-    .insert({
-      business_id: business.id,
-      service_id: serviceRow.id,
-      professional_id: professional.id,
-      customer_id: customerId,
-      starts_at: startsAtIso,
-      ends_at: endsAtIso,
-      status: 'confirmed',
-      payment_status: paymentStatus,
-      amount_clp: serviceRow.price_clp,
-    })
-    .select('id')
-    .single();
+  const firstDt = parseChileDateTime(date, time);
+  if (!Number.isNaN(firstDt.getTime()) && firstDt.getTime() < Date.now() - 5 * 60 * 1000) {
+    return NextResponse.json({
+      error: 'No se pueden agendar reservas en fechas u horarios pasados.',
+    }, { status: 400 });
+  }
 
-  if (insertError || !inserted) {
+  // Generate all recurring sessions for this service pack / schedule
+  const sessionsToCreate = calculateRecurringSessions({
+    serviceName: serviceRow.name,
+    billingPeriod: serviceRow.billing_period,
+    schedule: serviceRow.schedule,
+    startDate: date,
+    startTime: time,
+  });
+
+  const durationMs = serviceRow.duration_minutes * 60 * 1000;
+  const maxCapacity = serviceRow.class_type === 'grupal' ? (serviceRow.capacity || 10) : 1;
+
+  // Validate each session and filter out already-booked or conflicting slots
+  const validSessions: Array<{ startsAtIso: string; endsAtIso: string; start: Date }> = [];
+  let skippedDueToDoubleBooking = 0;
+
+  for (const s of sessionsToCreate) {
+    const sStart = parseChileDateTime(s.date, s.time);
+    if (Number.isNaN(sStart.getTime())) continue;
+    const sStartsAtIso = sStart.toISOString();
+    const sEndsAtIso = new Date(sStart.getTime() + durationMs).toISOString();
+
+    // 1. Verificar si el alumno ya tiene una clase agendada que se solape con este horario
+    const { data: studentOverlap } = await supabase
+      .from('bookings')
+      .select('id, starts_at, ends_at, services(name)')
+      .eq('customer_id', customerId)
+      .neq('status', 'cancelled')
+      .lt('starts_at', sEndsAtIso)
+      .gt('ends_at', sStartsAtIso)
+      .limit(1)
+      .maybeSingle();
+
+    if (studentOverlap) {
+      if (sessionsToCreate.length === 1) {
+        return NextResponse.json({
+          error: `El alumno ya tiene una clase agendada en ese horario (${(studentOverlap as any).services?.name || 'Clase'}).`,
+        }, { status: 409 });
+      }
+      skippedDueToDoubleBooking++;
+      continue;
+    }
+
+    // 2. Verificar disponibilidad del horario con el instructor (no permitir sobreponer horarios tomados)
+    const { data: instructorOverlaps } = await supabase
+      .from('bookings')
+      .select('id, service_id, starts_at, ends_at, services(name, class_type, capacity)')
+      .eq('professional_id', professional.id)
+      .neq('status', 'cancelled')
+      .lt('starts_at', sEndsAtIso)
+      .gt('ends_at', sStartsAtIso);
+
+    const activeOverlaps = instructorOverlaps || [];
+
+    if (activeOverlaps.length > 0) {
+      // Si la clase es individual (o capacidad 1), cualquier reserva previa significa que el horario está tomado
+      if (serviceRow.class_type === 'individual' || maxCapacity === 1) {
+        if (sessionsToCreate.length === 1) {
+          const takenClassName = (activeOverlaps[0] as any)?.services?.name || 'otra clase';
+          return NextResponse.json({
+            error: `El horario de las ${s.time} hrs ya se encuentra tomado con el instructor (${takenClassName}). No es posible asignar otra clase en el mismo bloque.`,
+          }, { status: 409 });
+        }
+        continue;
+      }
+
+      // Si la clase es grupal: no permitir mezclar con otras clases en el mismo bloque
+      const hasForeignClass = activeOverlaps.some(b => b.service_id !== serviceRow.id || b.starts_at !== sStartsAtIso);
+      if (hasForeignClass) {
+        if (sessionsToCreate.length === 1) {
+          return NextResponse.json({
+            error: 'El instructor ya tiene otra clase agendada en ese mismo bloque horario.',
+          }, { status: 409 });
+        }
+        continue;
+      }
+
+      // Verificar capacidad de la clase grupal
+      if (activeOverlaps.length >= maxCapacity) {
+        if (sessionsToCreate.length === 1) {
+          return NextResponse.json({
+            error: `¡Cupos agotados! Esta clase tiene una capacidad máxima de ${maxCapacity} alumnos y ya cuenta con ${activeOverlaps.length} inscritos.`,
+          }, { status: 409 });
+        }
+        continue;
+      }
+    }
+
+    validSessions.push({ startsAtIso: sStartsAtIso, endsAtIso: sEndsAtIso, start: sStart });
+  }
+
+  if (validSessions.length === 0) {
+    if (skippedDueToDoubleBooking > 0) {
+      return NextResponse.json({ error: 'El alumno ya se encuentra inscrito en las fechas de esta clase.' }, { status: 409 });
+    }
+    return NextResponse.json({ error: 'No fue posible asignar cupos en las fechas del plan (horarios copados o en conflicto).' }, { status: 409 });
+  }
+
+  const amountPerSession = Math.round(serviceRow.price_clp / validSessions.length);
+  const rowsToInsert = validSessions.map((s, idx) => ({
+    business_id: business.id,
+    service_id: serviceRow.id,
+    professional_id: professional.id,
+    customer_id: customerId,
+    starts_at: s.startsAtIso,
+    ends_at: s.endsAtIso,
+    status: 'confirmed',
+    payment_status: paymentStatus,
+    amount_clp: idx === 0
+      ? serviceRow.price_clp - (amountPerSession * (validSessions.length - 1))
+      : amountPerSession,
+  }));
+
+  const { data: insertedRows, error: insertError } = await supabase
+    .from('bookings')
+    .insert(rowsToInsert)
+    .select('id');
+
+  if (insertError || !insertedRows) {
     return NextResponse.json({ error: insertError?.message || 'Error al guardar reserva.' }, { status: 500 });
   }
 
-  const newEnrolled = currentEnrolled + 1;
-  const classDateStr = start.toLocaleDateString('es-CL', { weekday: 'long', day: 'numeric', month: 'long' });
-  const classTimeStr = start.toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' });
+  const firstSession = validSessions[0];
+  const classDateStr = firstSession.start.toLocaleDateString('es-CL', { weekday: 'long', day: 'numeric', month: 'long' });
+  const classTimeStr = firstSession.start.toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' });
 
   if (customer) {
-    const confirmMsg = `Hola ${customer.name}! Tu cupo para la clase de ${serviceRow.name} con ${professional.name} ha sido confirmado para el ${classDateStr} a las ${classTimeStr}. Cupo asegurado: ${newEnrolled}/${maxCapacity}.`;
+    const confirmMsg = validSessions.length > 1
+      ? `Hola ${customer.name}! Tu inscripción para ${serviceRow.name} con ${professional.name} ha sido confirmada para sus ${validSessions.length} sesiones a partir del ${classDateStr} a las ${classTimeStr}.`
+      : `Hola ${customer.name}! Tu cupo para la clase de ${serviceRow.name} con ${professional.name} ha sido confirmado para el ${classDateStr} a las ${classTimeStr}.`;
+
     await supabase.from('notifications').insert({
       business_id: business.id,
       customer_id: customer.id,
@@ -282,10 +342,11 @@ export async function POST(request: Request) {
   }
 
   return NextResponse.json({
-    id: inserted.id,
-    message: `Inscripción confirmada (${newEnrolled}/${maxCapacity} cupos ocupados).`,
-    enrolled: newEnrolled,
-    capacity: maxCapacity,
+    booking: insertedRows[0],
+    bookingsCount: validSessions.length,
+    message: validSessions.length > 1
+      ? `Se inscribió al alumno en las ${validSessions.length} clases del plan correctamente.`
+      : 'Inscripción confirmada.',
   }, { status: 201 });
 }
 
@@ -322,7 +383,7 @@ export async function PATCH(request: Request) {
   if (date && time) {
     const { data: booking } = await supabase
       .from('bookings')
-      .select('id, services(duration_minutes)')
+      .select('id, professional_id, customer_id, service_id, services(id, name, duration_minutes, class_type, capacity)')
       .eq('id', id)
       .eq('business_id', business.id)
       .maybeSingle();
@@ -331,11 +392,70 @@ export async function PATCH(request: Request) {
 
     const start = parseChileDateTime(date, time);
     if (Number.isNaN(start.getTime())) return NextResponse.json({ error: 'Fecha u hora inválida.' }, { status: 400 });
-    const duration = (booking.services as any)?.duration_minutes || 60;
+    if (start.getTime() < Date.now() - 5 * 60 * 1000) {
+      return NextResponse.json({ error: 'No se puede reagendar a una fecha u hora pasada.' }, { status: 400 });
+    }
+    const sService = booking.services as any;
+    const duration = sService?.duration_minutes || 60;
     const ends = new Date(start.getTime() + duration * 60 * 1000);
+    const startIso = start.toISOString();
+    const endsIso = ends.toISOString();
 
-    updatePayload.starts_at = start.toISOString();
-    updatePayload.ends_at = ends.toISOString();
+    // 1. Validar conflicto del alumno
+    const { data: studentOverlap } = await supabase
+      .from('bookings')
+      .select('id, services(name)')
+      .eq('customer_id', booking.customer_id)
+      .neq('id', id)
+      .neq('status', 'cancelled')
+      .lt('starts_at', endsIso)
+      .gt('ends_at', startIso)
+      .limit(1)
+      .maybeSingle();
+
+    if (studentOverlap) {
+      return NextResponse.json({
+        error: `El alumno ya tiene otra clase agendada en ese horario (${(studentOverlap as any).services?.name || 'Clase'}).`,
+      }, { status: 409 });
+    }
+
+    // 2. Validar conflicto del instructor (no permitir sobreponer horarios tomados)
+    const { data: instructorOverlaps } = await supabase
+      .from('bookings')
+      .select('id, service_id, starts_at, ends_at, services(name, class_type, capacity)')
+      .eq('professional_id', booking.professional_id)
+      .neq('id', id)
+      .neq('status', 'cancelled')
+      .lt('starts_at', endsIso)
+      .gt('ends_at', startIso);
+
+    const activeOverlaps = instructorOverlaps || [];
+    const maxCap = sService?.class_type === 'grupal' ? (sService?.capacity || 10) : 1;
+
+    if (activeOverlaps.length > 0) {
+      if (sService?.class_type === 'individual' || maxCap === 1) {
+        const takenName = (activeOverlaps[0] as any)?.services?.name || 'otra clase';
+        return NextResponse.json({
+          error: `El horario de las ${time} hrs ya se encuentra tomado con el instructor (${takenName}). No es posible sobreponer otra clase en el mismo bloque.`,
+        }, { status: 409 });
+      }
+
+      const hasForeignClass = activeOverlaps.some(b => b.service_id !== booking.service_id || b.starts_at !== startIso);
+      if (hasForeignClass) {
+        return NextResponse.json({
+          error: `El instructor ya está asignado a otra actividad en ese bloque horario.`,
+        }, { status: 409 });
+      }
+
+      if (activeOverlaps.length >= maxCap) {
+        return NextResponse.json({
+          error: `No hay cupos disponibles en ese horario grupal (Capacidad máxima: ${maxCap}).`,
+        }, { status: 409 });
+      }
+    }
+
+    updatePayload.starts_at = startIso;
+    updatePayload.ends_at = endsIso;
   }
 
   const { error } = await supabase
