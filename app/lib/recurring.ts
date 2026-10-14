@@ -142,12 +142,16 @@ export function calculateRecurringSessions(params: {
 
   while (sessions.length < total && safetyLimit-- > 0) {
     const isoDay = cur.getDay() === 0 ? 7 : cur.getDay();
-    if (dayTimeMap.has(isoDay)) {
-      const year = cur.getFullYear();
-      const month = String(cur.getMonth() + 1).padStart(2, '0');
-      const day = String(cur.getDate()).padStart(2, '0');
-      const dateStr = `${year}-${month}-${day}`;
-      const timeStr = dayTimeMap.get(isoDay)!;
+    const year = cur.getFullYear();
+    const month = String(cur.getMonth() + 1).padStart(2, '0');
+    const day = String(cur.getDate()).padStart(2, '0');
+    const dateStr = `${year}-${month}-${day}`;
+
+    const isFirstSession = sessions.length === 0 && dateStr === startDate;
+
+    if (isFirstSession || dayTimeMap.has(isoDay)) {
+      // Si es la primera sesión y el usuario reasignó la hora, respetamos su horario reasignado
+      const timeStr = isFirstSession ? (startTime || dayTimeMap.get(isoDay) || '18:00') : (dayTimeMap.get(isoDay) || startTime || '18:00');
       const dayLabel = DAY_NAMES_SHORT[isoDay] || '';
       sessions.push({
         date: dateStr,

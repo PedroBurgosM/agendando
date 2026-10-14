@@ -11,6 +11,15 @@ const bookingDateKey = (seconds: number) => { const p = chileDateParts(new Date(
 const startOfWeek = (date: Date) => { const result = new Date(date); result.setHours(12, 0, 0, 0); result.setDate(result.getDate() - ((result.getDay() + 6) % 7)); return result; };
 const addDays = (date: Date, days: number) => { const result = new Date(date); result.setDate(result.getDate() + days); return result; };
 
+const TIME_OPTIONS = [
+  '06:00', '06:30', '07:00', '07:30', '08:00', '08:30',
+  '09:00', '09:30', '10:00', '10:30', '11:00', '11:30',
+  '12:00', '12:30', '13:00', '13:30', '14:00', '14:30',
+  '15:00', '15:30', '16:00', '16:30', '17:00', '17:30',
+  '18:00', '18:30', '19:00', '19:30', '20:00', '20:30',
+  '21:00', '21:30', '22:00', '22:30', '23:00'
+];
+
 export { parseScheduleToSlots, type ParsedSlot };
 
 function SummaryDashboard({
@@ -2103,10 +2112,10 @@ function AgendaModule({ demo }: { demo: (message: string) => void }) {
                       </div>
                     )}
 
-                    {agendaBookingSlots.length > 1 && (
+                    {agendaBookingSlots.length > 0 && (
                       <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '8px', marginTop: '4px', marginBottom: '8px' }}>
                         <span style={{ fontSize: '11px', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'block', marginBottom: '6px' }}>
-                          Elegir día de la primera sesión:
+                          Horarios habituales de esta clase:
                         </span>
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
                           {agendaBookingSlots.map((slot, idx) => {
@@ -2149,6 +2158,71 @@ function AgendaModule({ demo }: { demo: (message: string) => void }) {
                         </div>
                       </div>
                     )}
+
+                    {/* Reasignación de fecha y hora */}
+                    <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '10px', marginTop: '4px', marginBottom: '8px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                        <span style={{ fontSize: '11px', fontWeight: 700, color: '#1e293b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                          🗓️ Reasignar Día y Horario para esta inscripción:
+                        </span>
+                        <span style={{ fontSize: '11px', color: '#64748b' }}>
+                          (Puedes modificar la fecha y la hora libremente)
+                        </span>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                        <div>
+                          <label style={{ fontSize: '11px', fontWeight: 600, color: '#475569', display: 'block', marginBottom: '2px' }}>
+                            Fecha de la sesión:
+                          </label>
+                          <input
+                            type="date"
+                            min={todayKey}
+                            value={agendaBookingDate}
+                            onChange={(e) => setAgendaBookingDate(e.target.value)}
+                            style={{
+                              width: '100%',
+                              height: '36px',
+                              border: '1px solid #cbd5e1',
+                              borderRadius: '6px',
+                              padding: '0 8px',
+                              fontSize: '13px',
+                              fontWeight: 600,
+                              background: '#ffffff',
+                              color: '#0f172a'
+                            }}
+                            required
+                          />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: '11px', fontWeight: 600, color: '#475569', display: 'block', marginBottom: '2px' }}>
+                            Horario de inicio:
+                          </label>
+                          <select
+                            value={agendaBookingTime}
+                            onChange={(e) => setAgendaBookingTime(e.target.value)}
+                            style={{
+                              width: '100%',
+                              height: '36px',
+                              border: '1px solid #cbd5e1',
+                              borderRadius: '6px',
+                              padding: '0 8px',
+                              fontSize: '13px',
+                              fontWeight: 600,
+                              background: '#ffffff',
+                              color: '#0f172a'
+                            }}
+                            required
+                          >
+                            {(() => {
+                              const timeList = TIME_OPTIONS.includes(agendaBookingTime) ? TIME_OPTIONS : Array.from(new Set([agendaBookingTime, ...TIME_OPTIONS])).sort();
+                              return timeList.map(t => (
+                                <option key={`agenda-time-opt-${t}`} value={t}>{t} hrs</option>
+                              ));
+                            })()}
+                          </select>
+                        </div>
+                      </div>
+                    </div>
 
                     {recurringPreview.length > 1 && (
                       <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '8px', marginTop: '4px' }}>
@@ -3065,10 +3139,10 @@ function BookingsModule({ demo }: { demo: (message: string) => void }) {
                       </div>
                     )}
 
-                    {bookingSlots.length > 1 && (
+                    {bookingSlots.length > 0 && (
                       <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '8px', marginTop: '4px', marginBottom: '8px' }}>
                         <span style={{ fontSize: '11px', fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'block', marginBottom: '6px' }}>
-                          Elegir día de la primera sesión:
+                          Horarios habituales de esta clase:
                         </span>
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
                           {bookingSlots.map((slot, idx) => {
@@ -3111,6 +3185,71 @@ function BookingsModule({ demo }: { demo: (message: string) => void }) {
                         </div>
                       </div>
                     )}
+
+                    {/* Reasignación de fecha y hora */}
+                    <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '10px', marginTop: '4px', marginBottom: '8px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                        <span style={{ fontSize: '11px', fontWeight: 700, color: '#1e293b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                          🗓️ Reasignar Día y Horario para esta inscripción:
+                        </span>
+                        <span style={{ fontSize: '11px', color: '#64748b' }}>
+                          (Puedes modificar la fecha y la hora libremente)
+                        </span>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                        <div>
+                          <label style={{ fontSize: '11px', fontWeight: 600, color: '#475569', display: 'block', marginBottom: '2px' }}>
+                            Fecha de la sesión:
+                          </label>
+                          <input
+                            type="date"
+                            min={todayKey}
+                            value={bookingDate}
+                            onChange={(e) => setBookingDate(e.target.value)}
+                            style={{
+                              width: '100%',
+                              height: '36px',
+                              border: '1px solid #cbd5e1',
+                              borderRadius: '6px',
+                              padding: '0 8px',
+                              fontSize: '13px',
+                              fontWeight: 600,
+                              background: '#ffffff',
+                              color: '#0f172a'
+                            }}
+                            required
+                          />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: '11px', fontWeight: 600, color: '#475569', display: 'block', marginBottom: '2px' }}>
+                            Horario de inicio:
+                          </label>
+                          <select
+                            value={bookingTime}
+                            onChange={(e) => setBookingTime(e.target.value)}
+                            style={{
+                              width: '100%',
+                              height: '36px',
+                              border: '1px solid #cbd5e1',
+                              borderRadius: '6px',
+                              padding: '0 8px',
+                              fontSize: '13px',
+                              fontWeight: 600,
+                              background: '#ffffff',
+                              color: '#0f172a'
+                            }}
+                            required
+                          >
+                            {(() => {
+                              const timeList = TIME_OPTIONS.includes(bookingTime) ? TIME_OPTIONS : Array.from(new Set([bookingTime, ...TIME_OPTIONS])).sort();
+                              return timeList.map(t => (
+                                <option key={`booking-time-opt-${t}`} value={t}>{t} hrs</option>
+                              ));
+                            })()}
+                          </select>
+                        </div>
+                      </div>
+                    </div>
 
                     {recurringPreview.length > 1 && (
                       <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '8px', marginTop: '4px' }}>
@@ -7349,14 +7488,6 @@ function ServicesModule({ demo }: { demo: (message: string) => void }) {
     { key: 'Dom', label: 'Domingo' },
   ];
 
-  const TIME_OPTIONS = [
-    '06:00', '06:30', '07:00', '07:30', '08:00', '08:30',
-    '09:00', '09:30', '10:00', '10:30', '11:00', '11:30',
-    '12:00', '12:30', '13:00', '13:30', '14:00', '14:30',
-    '15:00', '15:30', '16:00', '16:30', '17:00', '17:30',
-    '18:00', '18:30', '19:00', '19:30', '20:00', '20:30',
-    '21:00', '21:30', '22:00', '22:30', '23:00'
-  ];
 
   const [formDuration, setFormDuration] = useState<number>(60);
   const [formSchedule, setFormSchedule] = useState('');

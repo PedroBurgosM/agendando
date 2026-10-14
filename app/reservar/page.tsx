@@ -386,6 +386,39 @@ export default function BookingPage() {
                     </div>
                   );
                 })()}
+                <div style={{ marginTop: '10px', paddingTop: '8px', borderTop: '1px solid #e2e8f0' }}>
+                  <span style={{ fontSize: '11px', fontWeight: 700, color: '#1e293b', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: '6px' }}>
+                    O reasigna el día y la hora de tu primera clase:
+                  </span>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                    <div>
+                      <label style={{ fontSize: '11px', fontWeight: 600, color: '#475569', display: 'block' }}>
+                        Fecha:
+                        <input
+                          type="date"
+                          min={new Date().toISOString().slice(0, 10)}
+                          value={selectedDate}
+                          onChange={(e) => setSelectedDate(e.target.value)}
+                          style={{ height: '36px', padding: '0 8px', borderRadius: '6px', border: '1px solid #cbd5e1', width: '100%', fontSize: '13px', fontWeight: 600, marginTop: '2px', background: '#ffffff', color: '#0f172a' }}
+                        />
+                      </label>
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '11px', fontWeight: 600, color: '#475569', display: 'block' }}>
+                        Hora:
+                        <select
+                          value={slot}
+                          onChange={(e) => setSlot(e.target.value)}
+                          style={{ height: '36px', padding: '0 8px', borderRadius: '6px', border: '1px solid #cbd5e1', width: '100%', fontSize: '13px', fontWeight: 600, marginTop: '2px', background: '#ffffff', color: '#0f172a' }}
+                        >
+                          {['07:00', '07:30', '08:00', '08:30', '09:00', '09:30', '10:00', '10:30', '11:00', '11:30', '12:00', '12:30', '13:00', '13:30', '14:00', '14:30', '15:00', '15:30', '16:00', '16:30', '17:00', '17:30', '18:00', '18:30', '19:00', '19:30', '20:00', '20:30', '21:00', '21:30'].map(t => (
+                            <option key={t} value={t}>{t} hrs</option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+                  </div>
+                </div>
                 <input type="hidden" name="date" value={selectedDate} />
               </div>
             ) : (
