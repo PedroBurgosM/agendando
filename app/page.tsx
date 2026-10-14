@@ -669,8 +669,638 @@ function LoginView({ onLoginSuccess, demo }: { onLoginSuccess: (user: SessionUse
   );
 }
 
+function AdminProfileModal({
+  isOpen,
+  onClose,
+  sessionUser,
+  onUpdateUser,
+  demo,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  sessionUser: SessionUser | null;
+  onUpdateUser: (user: SessionUser) => void;
+  demo: (msg: string) => void;
+}) {
+  const [activeTab, setActiveTab] = useState<'profile' | 'password'>('profile');
+
+  // Form profile
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [profileError, setProfileError] = useState('');
+  const [profileSuccess, setProfileSuccess] = useState('');
+
+  // Form password
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showCurrent, setShowCurrent] = useState(false);
+  const [showNew, setShowNew] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [savingPassword, setSavingPassword] = useState(false);
+  const [passwordError, setPasswordError] = useState('');
+  const [passwordSuccess, setPasswordSuccess] = useState('');
+
+  useEffect(() => {
+    if (sessionUser) {
+      setName(sessionUser.name || '');
+      setEmail(sessionUser.email || '');
+    }
+  }, [sessionUser, isOpen]);
+
+  useEffect(() => {
+    if (isOpen) {
+      setProfileError('');
+      setProfileSuccess('');
+      setPasswordError('');
+      setPasswordSuccess('');
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+    }
+  }, [isOpen]);
+
+  if (!isOpen) return null;
+
+  const isSuper = Boolean(
+    sessionUser?.isSuperAdmin ||
+    sessionUser?.role === 'superadmin' ||
+    sessionUser?.email?.toLowerCase().trim() === 'admin@agendando.cl' ||
+    String(sessionUser?.id) === '1'
+  );
+
+  async function handleUpdateProfile(e: FormEvent) {
+    e.preventDefault();
+    setSavingProfile(true);
+    setProfileError('');
+    setProfileSuccess('');
+
+    try {
+      const res = await fetch('/api/auth/me', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'update_profile', name, email }),
+      });
+      const data = (await res.json()) as { ok?: boolean; message?: string; error?: string; user?: SessionUser };
+      if (!res.ok) {
+        throw new Error(data.error || 'No fue posible actualizar tus datos.');
+      }
+      if (data.user) {
+        onUpdateUser(data.user);
+      }
+      setProfileSuccess(data.message || 'Datos de perfil actualizados exitosamente.');
+      demo(data.message || 'Perfil actualizado.');
+    } catch (err: any) {
+      setProfileError(err?.message || 'Error al actualizar el perfil.');
+    } finally {
+      setSavingProfile(false);
+    }
+  }
+
+  async function handleChangePassword(e: FormEvent) {
+    e.preventDefault();
+    setSavingPassword(true);
+    setPasswordError('');
+    setPasswordSuccess('');
+
+    if (newPassword.length < 6) {
+      setPasswordError('La nueva contraseña debe tener al menos 6 caracteres.');
+      setSavingPassword(false);
+      return;
+    }
+
+    if (newPassword !== confirmPassword) {
+      setPasswordError('La confirmación de la nueva contraseña no coincide.');
+      setSavingPassword(false);
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/auth/me', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'change_password', currentPassword, newPassword, confirmPassword }),
+      });
+      const data = (await res.json()) as { ok?: boolean; message?: string; error?: string; user?: SessionUser };
+      if (!res.ok) {
+        throw new Error(data.error || 'No fue posible cambiar la contraseña.');
+      }
+      if (data.user) {
+        onUpdateUser(data.user);
+      }
+      setPasswordSuccess(data.message || 'Contraseña de ingreso actualizada exitosamente.');
+      demo(data.message || 'Contraseña actualizada.');
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+    } catch (err: any) {
+      setPasswordError(err?.message || 'Error al actualizar la contraseña.');
+    } finally {
+      setSavingPassword(false);
+    }
+  }
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(15, 23, 42, 0.65)',
+        backdropFilter: 'blur(3px)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 1000,
+        padding: '20px',
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        style={{
+          background: '#fff',
+          borderRadius: '16px',
+          width: '100%',
+          maxWidth: '520px',
+          maxHeight: '90vh',
+          overflowY: 'auto',
+          padding: '28px',
+          boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.2)',
+        }}
+      >
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+          <div>
+            <h2 style={{ fontSize: '20px', fontWeight: 700, color: '#0f172a', margin: 0 }}>
+              Mi Cuenta de Administrador
+            </h2>
+            <p style={{ fontSize: '13px', color: '#64748b', margin: '4px 0 0' }}>
+              Edita tus datos personales o cambia tu contraseña de acceso al panel.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            style={{
+              background: '#f1f5f9',
+              border: 'none',
+              borderRadius: '50%',
+              width: '32px',
+              height: '32px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: '16px',
+              cursor: 'pointer',
+              color: '#64748b',
+            }}
+          >
+            ✕
+          </button>
+        </div>
+
+        {/* Selector de pestañas */}
+        <div
+          style={{
+            display: 'flex',
+            background: '#f1f5f9',
+            padding: '4px',
+            borderRadius: '10px',
+            marginBottom: '20px',
+            gap: '4px',
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('profile');
+              setProfileError('');
+              setProfileSuccess('');
+            }}
+            style={{
+              flex: 1,
+              padding: '9px 12px',
+              borderRadius: '8px',
+              border: 'none',
+              fontSize: '13px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              background: activeTab === 'profile' ? '#fff' : 'transparent',
+              color: activeTab === 'profile' ? '#0f172a' : '#64748b',
+              boxShadow: activeTab === 'profile' ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
+              transition: 'all 0.15s ease',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px',
+            }}
+          >
+            <span>👤</span>
+            <span>Mis Datos</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setActiveTab('password');
+              setPasswordError('');
+              setPasswordSuccess('');
+            }}
+            style={{
+              flex: 1,
+              padding: '9px 12px',
+              borderRadius: '8px',
+              border: 'none',
+              fontSize: '13px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              background: activeTab === 'password' ? '#fff' : 'transparent',
+              color: activeTab === 'password' ? '#0f172a' : '#64748b',
+              boxShadow: activeTab === 'password' ? '0 1px 3px rgba(0,0,0,0.08)' : 'none',
+              transition: 'all 0.15s ease',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px',
+            }}
+          >
+            <span>🔒</span>
+            <span>Cambiar Clave</span>
+          </button>
+        </div>
+
+        {activeTab === 'profile' ? (
+          <form onSubmit={handleUpdateProfile} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div
+              style={{
+                background: isSuper ? '#f5f3ff' : '#eff6ff',
+                border: `1px solid ${isSuper ? '#ddd6fe' : '#bfdbfe'}`,
+                padding: '12px 16px',
+                borderRadius: '10px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+              }}
+            >
+              <div>
+                <span
+                  style={{
+                    fontSize: '11px',
+                    fontWeight: 700,
+                    textTransform: 'uppercase',
+                    color: isSuper ? '#6d28d9' : '#1d4ed8',
+                    letterSpacing: '0.5px',
+                  }}
+                >
+                  Rol en el sistema
+                </span>
+                <div style={{ fontSize: '13px', fontWeight: 600, color: '#0f172a', marginTop: '2px' }}>
+                  {isSuper ? '🛡️ Super Administrador Woodland' : `🏢 Administrador (${sessionUser?.business?.name || 'Mi Negocio'})`}
+                </div>
+              </div>
+              <span
+                style={{
+                  background: isSuper ? '#7559f2' : '#2563eb',
+                  color: '#fff',
+                  fontSize: '11px',
+                  fontWeight: 600,
+                  padding: '3px 8px',
+                  borderRadius: '12px',
+                }}
+              >
+                {isSuper ? 'SUPERADMIN' : 'ADMIN'}
+              </span>
+            </div>
+
+            <div>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#334155', marginBottom: '6px' }}>
+                Nombre completo *
+              </label>
+              <input
+                type="text"
+                required
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Ej. Francisco Woodland"
+                style={{
+                  width: '100%',
+                  padding: '10px 12px',
+                  borderRadius: '8px',
+                  border: '1px solid #cbd5e1',
+                  fontSize: '14px',
+                  outline: 'none',
+                }}
+              />
+            </div>
+
+            <div>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#334155', marginBottom: '6px' }}>
+                Correo electrónico de ingreso *
+              </label>
+              <input
+                type="email"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="admin@ejemplo.cl"
+                style={{
+                  width: '100%',
+                  padding: '10px 12px',
+                  borderRadius: '8px',
+                  border: '1px solid #cbd5e1',
+                  fontSize: '14px',
+                  outline: 'none',
+                }}
+              />
+              <span style={{ fontSize: '12px', color: '#64748b', marginTop: '4px', display: 'block' }}>
+                Con este correo iniciarás sesión en el panel administrativo.
+              </span>
+            </div>
+
+            {profileError && (
+              <div
+                style={{
+                  background: '#fef2f2',
+                  border: '1px solid #fecaca',
+                  color: '#991b1b',
+                  padding: '10px 14px',
+                  borderRadius: '8px',
+                  fontSize: '13px',
+                }}
+              >
+                ⚠️ {profileError}
+              </div>
+            )}
+
+            {profileSuccess && (
+              <div
+                style={{
+                  background: '#f0fdf4',
+                  border: '1px solid #bbf7d0',
+                  color: '#166534',
+                  padding: '10px 14px',
+                  borderRadius: '8px',
+                  fontSize: '13px',
+                }}
+              >
+                ✓ {profileSuccess}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '8px' }}>
+              <button
+                type="button"
+                onClick={onClose}
+                style={{
+                  padding: '10px 16px',
+                  borderRadius: '8px',
+                  border: '1px solid #cbd5e1',
+                  background: '#fff',
+                  color: '#475569',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                Cerrar
+              </button>
+              <button
+                type="submit"
+                disabled={savingProfile}
+                style={{
+                  padding: '10px 20px',
+                  borderRadius: '8px',
+                  border: 'none',
+                  background: '#2563eb',
+                  color: '#fff',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  cursor: savingProfile ? 'not-allowed' : 'pointer',
+                  opacity: savingProfile ? 0.7 : 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}
+              >
+                {savingProfile ? 'Guardando…' : 'Guardar mis datos'}
+              </button>
+            </div>
+          </form>
+        ) : (
+          <form onSubmit={handleChangePassword} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div
+              style={{
+                background: '#fffbeb',
+                border: '1px solid #fde68a',
+                padding: '10px 14px',
+                borderRadius: '8px',
+                fontSize: '12px',
+                color: '#92400e',
+              }}
+            >
+              🔒 Para cambiar tu clave, ingresa tu contraseña actual de acceso y luego define la nueva (mínimo 6 caracteres).
+            </div>
+
+            <div>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#334155', marginBottom: '6px' }}>
+                Contraseña actual *
+              </label>
+              <div style={{ position: 'relative' }}>
+                <input
+                  type={showCurrent ? 'text' : 'password'}
+                  required
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  placeholder="Tu contraseña actual"
+                  style={{
+                    width: '100%',
+                    padding: '10px 40px 10px 12px',
+                    borderRadius: '8px',
+                    border: '1px solid #cbd5e1',
+                    fontSize: '14px',
+                    outline: 'none',
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowCurrent(!showCurrent)}
+                  style={{
+                    position: 'absolute',
+                    right: '10px',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                    color: '#64748b',
+                  }}
+                >
+                  {showCurrent ? '🙈' : '👁️'}
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#334155', marginBottom: '6px' }}>
+                Nueva contraseña *
+              </label>
+              <div style={{ position: 'relative' }}>
+                <input
+                  type={showNew ? 'text' : 'password'}
+                  required
+                  minLength={6}
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="Mínimo 6 caracteres"
+                  style={{
+                    width: '100%',
+                    padding: '10px 40px 10px 12px',
+                    borderRadius: '8px',
+                    border: '1px solid #cbd5e1',
+                    fontSize: '14px',
+                    outline: 'none',
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowNew(!showNew)}
+                  style={{
+                    position: 'absolute',
+                    right: '10px',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                    color: '#64748b',
+                  }}
+                >
+                  {showNew ? '🙈' : '👁️'}
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#334155', marginBottom: '6px' }}>
+                Confirmar nueva contraseña *
+              </label>
+              <div style={{ position: 'relative' }}>
+                <input
+                  type={showConfirm ? 'text' : 'password'}
+                  required
+                  minLength={6}
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="Repite la nueva contraseña"
+                  style={{
+                    width: '100%',
+                    padding: '10px 40px 10px 12px',
+                    borderRadius: '8px',
+                    border: '1px solid #cbd5e1',
+                    fontSize: '14px',
+                    outline: 'none',
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowConfirm(!showConfirm)}
+                  style={{
+                    position: 'absolute',
+                    right: '10px',
+                    top: '50%',
+                    transform: 'translateY(-50%)',
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                    color: '#64748b',
+                  }}
+                >
+                  {showConfirm ? '🙈' : '👁️'}
+                </button>
+              </div>
+            </div>
+
+            {passwordError && (
+              <div
+                style={{
+                  background: '#fef2f2',
+                  border: '1px solid #fecaca',
+                  color: '#991b1b',
+                  padding: '10px 14px',
+                  borderRadius: '8px',
+                  fontSize: '13px',
+                }}
+              >
+                ⚠️ {passwordError}
+              </div>
+            )}
+
+            {passwordSuccess && (
+              <div
+                style={{
+                  background: '#f0fdf4',
+                  border: '1px solid #bbf7d0',
+                  color: '#166534',
+                  padding: '10px 14px',
+                  borderRadius: '8px',
+                  fontSize: '13px',
+                }}
+              >
+                ✓ {passwordSuccess}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '8px' }}>
+              <button
+                type="button"
+                onClick={onClose}
+                style={{
+                  padding: '10px 16px',
+                  borderRadius: '8px',
+                  border: '1px solid #cbd5e1',
+                  background: '#fff',
+                  color: '#475569',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                Cerrar
+              </button>
+              <button
+                type="submit"
+                disabled={savingPassword}
+                style={{
+                  padding: '10px 20px',
+                  borderRadius: '8px',
+                  border: 'none',
+                  background: '#2563eb',
+                  color: '#fff',
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  cursor: savingPassword ? 'not-allowed' : 'pointer',
+                  opacity: savingPassword ? 0.7 : 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                }}
+              >
+                {savingPassword ? 'Actualizando…' : 'Cambiar contraseña'}
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function Home() {
   const [sessionUser, setSessionUser] = useState<SessionUser | null>(null);
+  const [profileModalOpen, setProfileModalOpen] = useState(false);
   const [authChecking, setAuthChecking] = useState(true);
   const [active, setActive] = useState('Resumen');
   const [notice, setNotice] = useState('');
@@ -890,7 +1520,13 @@ export default function Home() {
             </button>
           )}
           <div className="profile" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+            <div
+              onClick={() => setProfileModalOpen(true)}
+              style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0, cursor: 'pointer', flex: 1, padding: '4px', borderRadius: '8px', transition: 'background 0.15s ease' }}
+              title="Haz clic para ver o editar tus datos y clave de ingreso"
+              onMouseEnter={(e) => (e.currentTarget.style.background = '#f1f5f9')}
+              onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+            >
               <span style={{ width: 34, height: 34, borderRadius: '50%', background: isSuper ? '#7559f2' : '#6366f1', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold', flexShrink: 0 }}>
                 {sessionUser?.name ? sessionUser.name.charAt(0).toUpperCase() : 'A'}
               </span>
@@ -903,27 +1539,47 @@ export default function Home() {
                 </small>
               </div>
             </div>
-            <button
-              type="button"
-              onClick={handleLogout}
-              title="Cerrar sesión"
-              style={{
-                background: '#fee2e2',
-                border: '1px solid #fecaca',
-                color: '#b91c1c',
-                cursor: 'pointer',
-                padding: '4px 8px',
-                borderRadius: '6px',
-                fontSize: '11px',
-                fontWeight: 600,
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px',
-                flexShrink: 0
-              }}
-            >
-              Salir
-            </button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+              <button
+                type="button"
+                onClick={() => setProfileModalOpen(true)}
+                title="Editar mis datos o cambiar clave"
+                style={{
+                  background: '#f8fafc',
+                  border: '1px solid #e2e8f0',
+                  color: '#475569',
+                  cursor: 'pointer',
+                  padding: '5px 7px',
+                  borderRadius: '6px',
+                  fontSize: '12px',
+                  display: 'flex',
+                  alignItems: 'center',
+                }}
+              >
+                ✏️
+              </button>
+              <button
+                type="button"
+                onClick={handleLogout}
+                title="Cerrar sesión"
+                style={{
+                  background: '#fee2e2',
+                  border: '1px solid #fecaca',
+                  color: '#b91c1c',
+                  cursor: 'pointer',
+                  padding: '4px 8px',
+                  borderRadius: '6px',
+                  fontSize: '11px',
+                  fontWeight: 600,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  flexShrink: 0
+                }}
+              >
+                Salir
+              </button>
+            </div>
           </div>
         </div>
       </aside>
@@ -998,6 +1654,27 @@ export default function Home() {
             )}
             <button
               type="button"
+              onClick={() => setProfileModalOpen(true)}
+              title="Mi Perfil / Cambiar Clave"
+              style={{
+                background: '#ffffff',
+                border: '1px solid #e2e8f0',
+                color: '#334155',
+                cursor: 'pointer',
+                padding: '7px 12px',
+                borderRadius: '8px',
+                fontSize: '12px',
+                fontWeight: 600,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}
+            >
+              <span>👤</span>
+              <span className="public-link-text-full">Mi Cuenta</span>
+            </button>
+            <button
+              type="button"
               onClick={handleLogout}
               title="Cerrar sesión"
               style={{
@@ -1037,7 +1714,7 @@ export default function Home() {
         ) : active === 'Equipo' ? (
           <TeamModule demo={demo} />
         ) : active === 'Configuración' ? (
-          <SettingsModule demo={demo} />
+          <SettingsModule demo={demo} sessionUser={sessionUser} onUpdateUser={setSessionUser} />
         ) : (
           <SummaryDashboard setActive={setActive} demo={demo} sessionUser={sessionUser} />
         )}
@@ -1106,6 +1783,14 @@ export default function Home() {
           </>
         )}
       </nav>
+
+      <AdminProfileModal
+        isOpen={profileModalOpen}
+        onClose={() => setProfileModalOpen(false)}
+        sessionUser={sessionUser}
+        onUpdateUser={(updated) => setSessionUser(updated)}
+        demo={demo}
+      />
 
       {notice && <div className="toast" role="status">✓ {notice}</div>}
     </main>
@@ -9517,4 +10202,376 @@ function TeamModule({ demo }: { demo: (message: string) => void }) {
 }
 
 type Settings={name:string;email:string|null;phone:string|null;address:string|null;description:string|null;timezone:string;currency:string;cancellation_hours:number;booking_window_days:number};
-function SettingsModule({demo}:{demo:(message:string)=>void}){const [settings,setSettings]=useState<Settings|null>(null);const [saving,setSaving]=useState(false);const [error,setError]=useState('');useEffect(()=>{fetch('/api/settings',{cache:'no-store'}).then(r=>r.json()).then((d:any)=>setSettings(d.settings as Settings)).catch(()=>demo('No fue posible cargar la configuración.'));},[]);async function save(e:FormEvent<HTMLFormElement>){e.preventDefault();setSaving(true);setError('');const payload=Object.fromEntries(new FormData(e.currentTarget).entries());try{const r=await fetch('/api/settings',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});const d=await r.json() as {error?:string;message?:string};if(!r.ok)throw new Error(d.error);demo(d.message??'Configuración guardada.');}catch(x){setError(x instanceof Error?x.message:'No se pudo guardar.');}finally{setSaving(false);}}return <div className="settings-content"><div className="settings-title"><p className="eyebrow">ADMINISTRACIÓN</p><h1>Configuración</h1><p>Define la identidad y las reglas de reserva de tu negocio.</p></div>{!settings?<div className="settings-loading">Cargando configuración…</div>:<form className="settings-form" onSubmit={save}><section><header><span>01</span><div><h2>Información del negocio</h2><p>Estos datos aparecerán en tu página pública.</p></div></header><div className="form-grid"><label className="full">Nombre del negocio<input name="name" required defaultValue={settings.name}/></label><label>Correo de contacto<input name="email" type="email" defaultValue={settings.email??''}/></label><label>Teléfono<input name="phone" defaultValue={settings.phone??''}/></label><label className="full">Dirección<input name="address" defaultValue={settings.address??''}/></label><label className="full">Descripción<textarea name="description" rows={4} defaultValue={settings.description??''}/></label></div></section><section><header><span>02</span><div><h2>Reglas de reserva</h2><p>Controla anticipación, cancelaciones y moneda.</p></div></header><div className="form-grid"><label>Zona horaria<select name="timezone" defaultValue={settings.timezone}><option value="America/Santiago">Santiago</option><option value="America/Bogota">Bogotá</option><option value="America/Mexico_City">Ciudad de México</option><option value="Europe/Madrid">Madrid</option></select></label><label>Moneda<select name="currency" defaultValue={settings.currency}><option>CLP</option><option>USD</option><option>EUR</option></select></label><label>Cancelación mínima (horas)<input name="cancellationHours" type="number" min="0" defaultValue={settings.cancellation_hours}/></label><label>Ventana de reserva (días)<input name="bookingWindowDays" type="number" min="1" max="365" defaultValue={settings.booking_window_days}/></label></div></section>{error&&<div className="form-error">{error}</div>}<footer><a href="/reservar" target="_blank">↗ Ver página pública</a><button className="primary" disabled={saving}>{saving?'Guardando…':'Guardar configuración'}</button></footer></form>}</div>}
+
+function SettingsModule({
+  demo,
+  sessionUser,
+  onUpdateUser,
+}: {
+  demo: (message: string) => void;
+  sessionUser?: SessionUser | null;
+  onUpdateUser?: (user: SessionUser) => void;
+}) {
+  const [settings, setSettings] = useState<Settings | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  // Admin Profile state
+  const [adminName, setAdminName] = useState(sessionUser?.name || '');
+  const [adminEmail, setAdminEmail] = useState(sessionUser?.email || '');
+  const [savingAdmin, setSavingAdmin] = useState(false);
+  const [adminError, setAdminError] = useState('');
+  const [adminSuccess, setAdminSuccess] = useState('');
+
+  // Password state
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showCurrent, setShowCurrent] = useState(false);
+  const [showNew, setShowNew] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [savingPassword, setSavingPassword] = useState(false);
+  const [passwordError, setPasswordError] = useState('');
+  const [passwordSuccess, setPasswordSuccess] = useState('');
+
+  useEffect(() => {
+    if (sessionUser) {
+      setAdminName(sessionUser.name || '');
+      setAdminEmail(sessionUser.email || '');
+    }
+  }, [sessionUser]);
+
+  useEffect(() => {
+    fetch('/api/settings', { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((d: any) => setSettings(d.settings as Settings))
+      .catch(() => demo('No fue posible cargar la configuración.'));
+  }, []);
+
+  async function saveBusiness(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setSaving(true);
+    setError('');
+    const payload = Object.fromEntries(new FormData(e.currentTarget).entries());
+    try {
+      const r = await fetch('/api/settings', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const d = (await r.json()) as { error?: string; message?: string };
+      if (!r.ok) throw new Error(d.error);
+      demo(d.message ?? 'Configuración del negocio guardada.');
+    } catch (x) {
+      setError(x instanceof Error ? x.message : 'No se pudo guardar.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveAdminProfile(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setSavingAdmin(true);
+    setAdminError('');
+    setAdminSuccess('');
+    try {
+      const r = await fetch('/api/auth/me', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'update_profile', name: adminName, email: adminEmail }),
+      });
+      const d = (await r.json()) as { error?: string; message?: string; user?: SessionUser };
+      if (!r.ok) throw new Error(d.error || 'Error al actualizar datos de administrador.');
+      if (d.user && onUpdateUser) onUpdateUser(d.user);
+      setAdminSuccess(d.message || 'Datos de administrador actualizados exitosamente.');
+      demo(d.message || 'Datos actualizados.');
+    } catch (x: any) {
+      setAdminError(x?.message || 'No se pudo actualizar.');
+    } finally {
+      setSavingAdmin(false);
+    }
+  }
+
+  async function saveAdminPassword(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setSavingPassword(true);
+    setPasswordError('');
+    setPasswordSuccess('');
+
+    if (newPassword.length < 6) {
+      setPasswordError('La nueva contraseña debe tener al menos 6 caracteres.');
+      setSavingPassword(false);
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordError('La confirmación de la contraseña no coincide.');
+      setSavingPassword(false);
+      return;
+    }
+
+    try {
+      const r = await fetch('/api/auth/me', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'change_password', currentPassword, newPassword, confirmPassword }),
+      });
+      const d = (await r.json()) as { error?: string; message?: string; user?: SessionUser };
+      if (!r.ok) throw new Error(d.error || 'Error al cambiar la contraseña.');
+      if (d.user && onUpdateUser) onUpdateUser(d.user);
+      setPasswordSuccess(d.message || 'Contraseña de ingreso actualizada exitosamente.');
+      demo(d.message || 'Contraseña actualizada.');
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+    } catch (x: any) {
+      setPasswordError(x?.message || 'No se pudo cambiar la contraseña.');
+    } finally {
+      setSavingPassword(false);
+    }
+  }
+
+  return (
+    <div className="settings-content">
+      <div className="settings-title">
+        <p className="eyebrow">ADMINISTRACIÓN</p>
+        <h1>Configuración y Perfil</h1>
+        <p>Define la identidad del negocio, las reglas de reserva y tus credenciales de acceso administrativo.</p>
+      </div>
+
+      {!settings ? (
+        <div className="settings-loading">Cargando configuración…</div>
+      ) : (
+        <div style={{ display: 'grid', gap: '28px' }}>
+          {/* Bloque 1: Configuración del Negocio y Reglas de Reserva */}
+          <form className="settings-form" onSubmit={saveBusiness}>
+            <section>
+              <header>
+                <span>01</span>
+                <div>
+                  <h2>Información del negocio</h2>
+                  <p>Estos datos aparecerán en tu página pública.</p>
+                </div>
+              </header>
+              <div className="form-grid">
+                <label className="full">
+                  Nombre del negocio
+                  <input name="name" required defaultValue={settings.name} />
+                </label>
+                <label>
+                  Correo de contacto público
+                  <input name="email" type="email" defaultValue={settings.email ?? ''} />
+                </label>
+                <label>
+                  Teléfono
+                  <input name="phone" defaultValue={settings.phone ?? ''} />
+                </label>
+                <label className="full">
+                  Dirección
+                  <input name="address" defaultValue={settings.address ?? ''} />
+                </label>
+                <label className="full">
+                  Descripción
+                  <textarea name="description" rows={4} defaultValue={settings.description ?? ''} />
+                </label>
+              </div>
+            </section>
+
+            <section>
+              <header>
+                <span>02</span>
+                <div>
+                  <h2>Reglas de reserva</h2>
+                  <p>Controla anticipación, cancelaciones y moneda.</p>
+                </div>
+              </header>
+              <div className="form-grid">
+                <label>
+                  Zona horaria
+                  <select name="timezone" defaultValue={settings.timezone}>
+                    <option value="America/Santiago">Santiago</option>
+                    <option value="America/Bogota">Bogotá</option>
+                    <option value="America/Mexico_City">Ciudad de México</option>
+                    <option value="Europe/Madrid">Madrid</option>
+                  </select>
+                </label>
+                <label>
+                  Moneda
+                  <select name="currency" defaultValue={settings.currency}>
+                    <option>CLP</option>
+                    <option>USD</option>
+                    <option>EUR</option>
+                  </select>
+                </label>
+                <label>
+                  Cancelación mínima (horas)
+                  <input name="cancellationHours" type="number" min="0" defaultValue={settings.cancellation_hours} />
+                </label>
+                <label>
+                  Ventana de reserva (días)
+                  <input name="bookingWindowDays" type="number" min="1" max="365" defaultValue={settings.booking_window_days} />
+                </label>
+              </div>
+            </section>
+
+            {error && <div className="form-error">{error}</div>}
+
+            <footer>
+              <a href="/reservar" target="_blank">↗ Ver página pública</a>
+              <button className="primary" disabled={saving}>
+                {saving ? 'Guardando…' : 'Guardar información del negocio'}
+              </button>
+            </footer>
+          </form>
+
+          {/* Bloque 2: Datos de Administrador */}
+          <form className="settings-form" onSubmit={saveAdminProfile}>
+            <section>
+              <header>
+                <span>03</span>
+                <div>
+                  <h2>Datos de tu cuenta de Administrador</h2>
+                  <p>Modifica el nombre y correo con los que inicias sesión en este panel.</p>
+                </div>
+              </header>
+              <div className="form-grid">
+                <label className="full">
+                  Nombre del Administrador *
+                  <input
+                    type="text"
+                    required
+                    value={adminName}
+                    onChange={(e) => setAdminName(e.target.value)}
+                    placeholder="Ej. Francisco Woodland"
+                  />
+                </label>
+                <label className="full">
+                  Correo electrónico de acceso (Login) *
+                  <input
+                    type="email"
+                    required
+                    value={adminEmail}
+                    onChange={(e) => setAdminEmail(e.target.value)}
+                    placeholder="admin@ejemplo.cl"
+                  />
+                  <small style={{ color: '#64748b', marginTop: '4px', display: 'block', fontSize: '12px' }}>
+                    Con este correo ingresarás al sistema administrativo.
+                  </small>
+                </label>
+              </div>
+
+              {adminError && <div className="form-error" style={{ marginTop: '14px' }}>⚠️ {adminError}</div>}
+              {adminSuccess && (
+                <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', color: '#166534', padding: '10px 14px', borderRadius: '8px', fontSize: '13px', marginTop: '14px' }}>
+                  ✓ {adminSuccess}
+                </div>
+              )}
+
+              <footer style={{ marginTop: '20px', display: 'flex', justifyContent: 'flex-end' }}>
+                <button className="primary" type="submit" disabled={savingAdmin}>
+                  {savingAdmin ? 'Guardando datos…' : 'Actualizar mis datos de administrador'}
+                </button>
+              </footer>
+            </section>
+          </form>
+
+          {/* Bloque 3: Seguridad y Cambio de Clave */}
+          <form className="settings-form" onSubmit={saveAdminPassword}>
+            <section>
+              <header>
+                <span>04</span>
+                <div>
+                  <h2>Seguridad y Cambio de Clave de Ingreso</h2>
+                  <p>Actualiza la contraseña con la que ingresas al panel de administración.</p>
+                </div>
+              </header>
+
+              <div style={{ background: '#fffbeb', border: '1px solid #fde68a', color: '#92400e', padding: '12px 14px', borderRadius: '8px', fontSize: '12px', marginBottom: '16px' }}>
+                🔒 Ingresa tu contraseña actual para confirmar tu identidad antes de establecer la nueva clave (mínimo 6 caracteres).
+              </div>
+
+              <div className="form-grid">
+                <label className="full">
+                  Contraseña actual *
+                  <div style={{ position: 'relative' }}>
+                    <input
+                      type={showCurrent ? 'text' : 'password'}
+                      required
+                      value={currentPassword}
+                      onChange={(e) => setCurrentPassword(e.target.value)}
+                      placeholder="Tu contraseña actual"
+                      style={{ width: '100%', paddingRight: '40px' }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowCurrent(!showCurrent)}
+                      style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: '14px', color: '#64748b' }}
+                    >
+                      {showCurrent ? '🙈' : '👁️'}
+                    </button>
+                  </div>
+                </label>
+
+                <label>
+                  Nueva contraseña *
+                  <div style={{ position: 'relative' }}>
+                    <input
+                      type={showNew ? 'text' : 'password'}
+                      required
+                      minLength={6}
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      placeholder="Mínimo 6 caracteres"
+                      style={{ width: '100%', paddingRight: '40px' }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowNew(!showNew)}
+                      style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: '14px', color: '#64748b' }}
+                    >
+                      {showNew ? '🙈' : '👁️'}
+                    </button>
+                  </div>
+                </label>
+
+                <label>
+                  Confirmar nueva contraseña *
+                  <div style={{ position: 'relative' }}>
+                    <input
+                      type={showConfirm ? 'text' : 'password'}
+                      required
+                      minLength={6}
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      placeholder="Repite la nueva contraseña"
+                      style={{ width: '100%', paddingRight: '40px' }}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirm(!showConfirm)}
+                      style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: '14px', color: '#64748b' }}
+                    >
+                      {showConfirm ? '🙈' : '👁️'}
+                    </button>
+                  </div>
+                </label>
+              </div>
+
+              {passwordError && <div className="form-error" style={{ marginTop: '14px' }}>⚠️ {passwordError}</div>}
+              {passwordSuccess && (
+                <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', color: '#166534', padding: '10px 14px', borderRadius: '8px', fontSize: '13px', marginTop: '14px' }}>
+                  ✓ {passwordSuccess}
+                </div>
+              )}
+
+              <footer style={{ marginTop: '20px', display: 'flex', justifyContent: 'flex-end' }}>
+                <button className="primary" type="submit" disabled={savingPassword}>
+                  {savingPassword ? 'Cambiando clave…' : 'Cambiar contraseña de ingreso'}
+                </button>
+              </footer>
+            </section>
+          </form>
+        </div>
+      )}
+    </div>
+  );
+}
