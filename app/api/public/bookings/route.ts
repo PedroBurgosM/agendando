@@ -47,10 +47,36 @@ export async function GET(request: Request) {
       .order('name', { ascending: true }),
   ]);
 
+  const teamList = teamRes.data || [];
+  const profMap = new Map<number, string>(teamList.map((p: any) => [p.id, p.name]));
+
+  const mappedServices = (servicesRes.data || []).map((s: any) => {
+    const descStr = s.description || '';
+    const match = descStr.match(/<!--instructor:(\d+)-->/);
+    const instructorId = match ? Number(match[1]) : null;
+    const instructorName = instructorId ? (profMap.get(instructorId) || null) : null;
+    const showInstructor = !descStr.includes('<!--show_instructor:false-->');
+    const showSchedule = !descStr.includes('<!--show_schedule:false-->');
+    const scheduleMode = descStr.includes('<!--schedule_mode:flexible-->') ? 'flexible' : (s.schedule && s.schedule !== 'null' ? 'fixed' : 'flexible');
+    const cleanDescription = descStr.replace(/<!--[\s\S]*?-->/g, '').trim() || null;
+    const cleanSchedule = (s.schedule && s.schedule !== 'null' && s.schedule !== 'undefined' && s.schedule.trim() !== '') ? s.schedule.trim() : null;
+
+    return {
+      ...s,
+      description: cleanDescription,
+      schedule: cleanSchedule,
+      instructor_id: instructorId,
+      instructor_name: instructorName,
+      show_instructor: showInstructor,
+      show_schedule: showSchedule,
+      schedule_mode: scheduleMode,
+    };
+  });
+
   return NextResponse.json({
     business,
-    services: servicesRes.data || [],
-    team: teamRes.data || [],
+    services: mappedServices,
+    team: teamList,
   });
 }
 
@@ -136,17 +162,19 @@ export async function POST(request: Request) {
   const email = String(x.customerEmail ?? '').trim().toLowerCase();
   const phone = String(x.customerPhone ?? '').trim();
   const date = String(x.date ?? '');
-  const time = String(x.time ?? '');
+  const rawTime = String(x.time ?? '').trim();
+  const timePreference = String(x.timePreference ?? x.time_preference ?? '').trim();
+  const time = /^\d{2}:\d{2}$/.test(rawTime) ? rawTime : '10:00';
   const serviceId = Number(x.serviceId);
   const professionalId = Number(x.professionalId);
 
-  if (!name || !/^\S+@\S+\.\S+$/.test(email) || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{2}:\d{2}$/.test(time) || !Number.isInteger(serviceId) || !Number.isInteger(professionalId)) {
+  if (!name || !/^\S+@\S+\.\S+$/.test(email) || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !Number.isInteger(serviceId) || !Number.isInteger(professionalId)) {
     return NextResponse.json({ error: 'Completa correctamente tus datos.' }, { status: 400 });
   }
 
   const { data: service } = await supabase
     .from('services')
-    .select('id, name, class_type, capacity, duration_minutes, price_clp, billing_period, schedule')
+    .select('id, name, description, class_type, capacity, duration_minutes, price_clp, billing_period, schedule')
     .eq('id', serviceId)
     .eq('business_id', business.id)
     .eq('active', true)
@@ -329,12 +357,19 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: bookingErr?.message || 'Error al guardar la reserva.' }, { status: 500 });
   }
 
-  const firstSession = validSessions[0];
-  const classDateStr = firstSession.start.toLocaleDateString('es-CL', { weekday: 'long', day: 'numeric', month: 'long' });
-  const classTimeStr = firstSession.start.toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' });
-  const confirmMsg = validSessions.length > 1
-    ? `¡Hola ${name}! Tu cupo para las ${validSessions.length} sesiones de ${service.name} con ${professional.name} ha sido reservado a partir del ${classDateStr} a las ${classTimeStr}.`
-    : `¡Hola ${name}! Tu cupo para la clase de ${service.name} con ${professional.name} ha sido reservado para el ${classDateStr} a las ${classTimeStr}.`;
+  const descStr = service.description || '';
+  const isFlexible = descStr.includes('<!--schedule_mode:flexible-->') || !service.schedule || service.schedule === 'null';
+
+  const upcomingSessions = validSessions.filter(s => s.start.getTime() >= Date.now() - 5 * 60 * 1000);
+  const firstUpcomingSession = upcomingSessions.length > 0 ? upcomingSessions[0] : validSessions[0];
+  const classDateStr = firstUpcomingSession.start.toLocaleDateString('es-CL', { weekday: 'long', day: 'numeric', month: 'long' });
+  const classTimeStr = firstUpcomingSession.start.toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' });
+  
+  const confirmMsg = isFlexible
+    ? `¡Hola ${name}! Tu solicitud para ${service.name} ha sido recibida con éxito. El horario de tus clases será coordinado directamente contigo por tu instructor a tu teléfono/WhatsApp (${phone}).`
+    : (validSessions.length > 1
+        ? `¡Hola ${name}! Tu cupo para las ${validSessions.length} clases del mes de ${service.name} con ${professional.name} ha sido reservado con éxito. Tu próxima clase es el ${classDateStr} a las ${classTimeStr}.`
+        : `¡Hola ${name}! Tu cupo para la clase de ${service.name} con ${professional.name} ha sido reservado para el ${classDateStr} a las ${classTimeStr}.`);
 
   await supabase.from('notifications').insert({
     business_id: business.id,
@@ -342,7 +377,7 @@ export async function POST(request: Request) {
     type: 'booking_confirmed',
     channel: phone ? 'whatsapp' : 'email',
     recipient: phone || email,
-    subject: 'Cupo Confirmado',
+    subject: isFlexible ? 'Solicitud Recibida - Horario a Coordinar' : 'Cupo Confirmado',
     message: confirmMsg,
     status: 'sent',
     sent_at: new Date().toISOString(),
@@ -351,9 +386,11 @@ export async function POST(request: Request) {
   const booking = insertedList[0];
 
   if (professional && (professional.email || professional.phone)) {
-    const profMsg = validSessions.length > 1
-      ? `¡Hola ${professional.name}! Tienes una nueva reserva para tu clase de ${service.name} a partir del ${classDateStr} a las ${classTimeStr} (${validSessions.length} sesiones). Alumno: ${name} (${phone || email}).`
-      : `¡Hola ${professional.name}! Tienes una nueva reserva para tu clase de ${service.name} el ${classDateStr} a las ${classTimeStr}. Alumno: ${name} (${phone || email}).`;
+    const profMsg = isFlexible
+      ? `¡Hola ${professional.name}! Tienes una nueva solicitud para tu clase ${service.name} (Horario a coordinar). Alumno: ${name} (${phone || email})${timePreference ? ` - Preferencia: ${timePreference}` : ''}. Comunícate con él para acordar los horarios.`
+      : (validSessions.length > 1
+          ? `¡Hola ${professional.name}! Tienes una nueva inscripción para tu clase de ${service.name} (${validSessions.length} clases del mes). Próxima clase: ${classDateStr} a las ${classTimeStr}. Alumno: ${name} (${phone || email}).`
+          : `¡Hola ${professional.name}! Tienes una nueva reserva para tu clase de ${service.name} el ${classDateStr} a las ${classTimeStr}. Alumno: ${name} (${phone || email}).`);
 
     await supabase.from('notifications').insert({
       business_id: business.id,
@@ -361,7 +398,7 @@ export async function POST(request: Request) {
       type: 'booking_confirmed',
       channel: professional.phone ? 'whatsapp' : 'email',
       recipient: professional.phone || professional.email,
-      subject: 'Nueva Reserva para tu Clase',
+      subject: isFlexible ? 'Nueva Solicitud (Horario a Coordinar)' : 'Nueva Reserva para tu Clase',
       message: profMsg,
       status: 'sent',
       sent_at: new Date().toISOString(),
@@ -376,13 +413,16 @@ export async function POST(request: Request) {
     id: booking.id,
     bookingId: booking.id,
     bookingsCount: validSessions.length,
-    message: validSessions.length > 1
-      ? `¡Tus ${validSessions.length} clases quedaron reservadas con éxito!`
-      : '¡Tu cupo quedó asegurado!',
+    isFlexible,
+    message: isFlexible
+      ? '¡Solicitud recibida! Te contactaremos para coordinar tu horario.'
+      : (validSessions.length > 1
+          ? `¡Tus ${validSessions.length} clases del mes quedaron reservadas con éxito!`
+          : '¡Tu cupo quedó asegurado!'),
     serviceName: service.name,
     professionalName: professional.name,
-    classDateStr,
-    classTimeStr,
+    classDateStr: isFlexible ? `A partir del ${date}` : classDateStr,
+    classTimeStr: isFlexible ? (timePreference || 'Horario a convenir con instructor') : classTimeStr,
     studentWaUrl,
     customerName: name,
     customerPhone: phone,

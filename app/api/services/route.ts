@@ -57,7 +57,13 @@ export async function GET(request: Request) {
       if (lastBooking?.professional_id) instructorId = Number(lastBooking.professional_id);
     }
     const instructorName = instructorId ? (profMap.get(instructorId) || null) : null;
-    const cleanDescription = descStr.replace(/<!--instructor:\d+-->/g, '').trim() || null;
+    
+    const showInstructor = !descStr.includes('<!--show_instructor:false-->');
+    const showSchedule = !descStr.includes('<!--show_schedule:false-->');
+    const scheduleMode = descStr.includes('<!--schedule_mode:flexible-->') ? 'flexible' : (s.schedule && s.schedule !== 'null' ? 'fixed' : 'flexible');
+
+    const cleanDescription = descStr.replace(/<!--[\s\S]*?-->/g, '').trim() || null;
+    const cleanSchedule = (s.schedule && s.schedule !== 'null' && s.schedule !== 'undefined' && s.schedule.trim() !== '') ? s.schedule.trim() : null;
 
     return {
       id: s.id,
@@ -71,9 +77,12 @@ export async function GET(request: Request) {
       price_clp: s.price_clp,
       deposit_percent: s.deposit_percent,
       active: s.active,
-      schedule: s.schedule,
+      schedule: cleanSchedule,
       instructor_id: instructorId,
       instructor_name: instructorName,
+      show_instructor: showInstructor,
+      show_schedule: showSchedule,
+      schedule_mode: scheduleMode,
       booking_count: activeBookings.length,
       paid_total: paidTotal,
     };
@@ -86,8 +95,20 @@ function values(body: Record<string, unknown>) {
   const name = String(body.name ?? '').trim();
   const rawDesc = String(body.description ?? '').trim();
   const professionalId = body.professionalId ? Number(body.professionalId) : (body.instructor_id ? Number(body.instructor_id) : null);
-  const userDesc = rawDesc.replace(/<!--instructor:\d+-->/g, '').trim();
-  const description = professionalId ? `<!--instructor:${professionalId}-->${userDesc}` : (userDesc || null);
+  
+  const showInstructor = body.showInstructor !== undefined ? Boolean(body.showInstructor) : (body.show_instructor !== undefined ? Boolean(body.show_instructor) : true);
+  const showSchedule = body.showSchedule !== undefined ? Boolean(body.showSchedule) : (body.show_schedule !== undefined ? Boolean(body.show_schedule) : true);
+  const scheduleMode = String(body.scheduleMode ?? body.schedule_mode ?? 'fixed') === 'flexible' ? 'flexible' : 'fixed';
+
+  const userDesc = rawDesc.replace(/<!--[\s\S]*?-->/g, '').trim();
+
+  const tags: string[] = [];
+  if (professionalId) tags.push(`<!--instructor:${professionalId}-->`);
+  if (!showInstructor) tags.push('<!--show_instructor:false-->');
+  if (!showSchedule || scheduleMode === 'flexible') tags.push('<!--show_schedule:false-->');
+  if (scheduleMode === 'flexible') tags.push('<!--schedule_mode:flexible-->');
+
+  const description = tags.length > 0 ? `${tags.join('')}${userDesc}` : (userDesc || null);
 
   const mode = String(body.mode ?? 'presencial');
   const classType = String(body.classType ?? body.class_type ?? 'individual');
@@ -98,7 +119,9 @@ function values(body: Record<string, unknown>) {
   const deposit = Number(body.depositPercent ?? body.deposit_percent ?? 0);
   const rawPeriod = String(body.billingPeriod ?? body.billing_period ?? 'mensual').toLowerCase();
   const billingPeriod = ['mensual', 'anual', 'sesion'].includes(rawPeriod) ? rawPeriod : 'mensual';
-  const schedule = body.schedule !== undefined ? (String(body.schedule).trim() || null) : null;
+
+  const rawSched = body.schedule !== undefined ? String(body.schedule).trim() : null;
+  const schedule = (rawSched && rawSched !== 'null' && rawSched !== 'undefined' && scheduleMode !== 'flexible') ? rawSched : null;
 
   if (
     !name ||

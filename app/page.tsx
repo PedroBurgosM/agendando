@@ -2912,10 +2912,10 @@ function AgendaModule({ demo }: { demo: (message: string) => void }) {
                       <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '8px', marginTop: '4px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
                           <span style={{ fontSize: '11px', fontWeight: 700, color: '#047857', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                            ✓ Plan completo: Se agendarán las {recurringPreview.length} sesiones automáticamente
+                            ✓ Plan mensual completo: Se agendarán las {recurringPreview.length} clases del mes automáticamente
                           </span>
                           <span style={{ fontSize: '11px', fontWeight: 600, color: '#64748b' }}>
-                            Total: {recurringPreview.length} clases
+                            Total: {recurringPreview.length} clases en el mes
                           </span>
                         </div>
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '6px', maxHeight: '140px', overflowY: 'auto' }}>
@@ -3939,10 +3939,10 @@ function BookingsModule({ demo }: { demo: (message: string) => void }) {
                       <div style={{ borderTop: '1px solid #e2e8f0', paddingTop: '8px', marginTop: '4px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
                           <span style={{ fontSize: '11px', fontWeight: 700, color: '#047857', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                            ✓ Plan completo: Se agendarán las {recurringPreview.length} sesiones automáticamente
+                            ✓ Plan mensual completo: Se agendarán las {recurringPreview.length} clases del mes automáticamente
                           </span>
                           <span style={{ fontSize: '11px', fontWeight: 600, color: '#64748b' }}>
-                            Total: {recurringPreview.length} clases
+                            Total: {recurringPreview.length} clases en el mes
                           </span>
                         </div>
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '6px', maxHeight: '140px', overflowY: 'auto' }}>
@@ -8142,6 +8142,9 @@ type Service = {
   schedule?: string | null;
   instructor_id?: number | null;
   instructor_name?: string | null;
+  show_instructor?: boolean;
+  show_schedule?: boolean;
+  schedule_mode?: 'fixed' | 'flexible';
   duration_minutes: number;
   price_clp: number;
   deposit_percent: number;
@@ -8162,6 +8165,9 @@ function ServicesModule({ demo }: { demo: (message: string) => void }) {
   const [formClassType, setFormClassType] = useState<'individual' | 'grupal'>('grupal');
   const [formBillingPeriod, setFormBillingPeriod] = useState<'mensual' | 'anual' | 'sesion'>('mensual');
   const [formProfessionalId, setFormProfessionalId] = useState<string>('');
+  const [formShowInstructor, setFormShowInstructor] = useState<boolean>(true);
+  const [formShowSchedule, setFormShowSchedule] = useState<boolean>(true);
+  const [formScheduleMode, setFormScheduleMode] = useState<'fixed' | 'flexible'>('fixed');
   const DAYS_OF_WEEK = [
     { key: 'Lun', label: 'Lunes' },
     { key: 'Mar', label: 'Martes' },
@@ -8466,6 +8472,9 @@ function ServicesModule({ demo }: { demo: (message: string) => void }) {
     setFormDuration(60);
     const defaultProf = team.filter(m => Boolean(m.active))[0]?.id ? String(team.filter(m => Boolean(m.active))[0].id) : (team[0] ? String(team[0].id) : '');
     setFormProfessionalId(defaultProf);
+    setFormShowInstructor(true);
+    setFormShowSchedule(true);
+    setFormScheduleMode('fixed');
     const defaultSlot = 'Lun, Mié y Vie 18:30 - 19:30';
     setFormSchedule(defaultSlot);
     setScheduleSlots([defaultSlot]);
@@ -8488,7 +8497,11 @@ function ServicesModule({ demo }: { demo: (message: string) => void }) {
     const foundByName = team.find(m => m.name.toLowerCase() === (s.instructor_name || '').toLowerCase());
     const profId = s.instructor_id ? String(s.instructor_id) : (foundByName ? String(foundByName.id) : '');
     setFormProfessionalId(profId);
-    const rawSched = s.schedule || '';
+    setFormShowInstructor(s.show_instructor !== false);
+    const isFlex = s.schedule_mode === 'flexible' || !s.schedule || s.schedule === 'null' || s.show_schedule === false;
+    setFormScheduleMode(isFlex ? 'flexible' : 'fixed');
+    setFormShowSchedule(s.show_schedule !== false && !isFlex);
+    const rawSched = s.schedule && s.schedule !== 'null' ? s.schedule : '';
     setFormSchedule(rawSched);
     const parsed = rawSched ? splitScheduleString(rawSched) : [];
     setScheduleSlots(parsed);
@@ -8602,40 +8615,47 @@ function ServicesModule({ demo }: { demo: (message: string) => void }) {
     // Si el usuario configuró días y horas pero no presionó "Agregar a este horario" ni escribió texto manual,
     // o si formSchedule está definido, aseguramos que schedule se guarde con el horario correspondiente.
     let finalSchedule = formSchedule.trim();
-    if (!finalSchedule && scheduleSlots.length > 0) {
-      finalSchedule = scheduleSlots.join(' / ');
-    } else if (!finalSchedule && selectedDays.length > 0) {
-      if (scheduleType === 'different_times') {
-        const dayOrder = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
-        const sorted = [...selectedDays].sort((a, b) => dayOrder.indexOf(a) - dayOrder.indexOf(b));
-        finalSchedule = sorted.map(d => `${d} ${perDayTimes[d]?.start || slotStart} - ${perDayTimes[d]?.end || slotEnd}`).join(' / ');
-      } else {
-        const daysText = formatDaysSummary(selectedDays);
-        finalSchedule = `${daysText} ${slotStart} - ${slotEnd}`;
+    if (formScheduleMode === 'flexible') {
+      finalSchedule = '';
+    } else {
+      if (!finalSchedule && scheduleSlots.length > 0) {
+        finalSchedule = scheduleSlots.join(' / ');
+      } else if (!finalSchedule && selectedDays.length > 0) {
+        if (scheduleType === 'different_times') {
+          const dayOrder = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+          const sorted = [...selectedDays].sort((a, b) => dayOrder.indexOf(a) - dayOrder.indexOf(b));
+          finalSchedule = sorted.map(d => `${d} ${perDayTimes[d]?.start || slotStart} - ${perDayTimes[d]?.end || slotEnd}`).join(' / ');
+        } else {
+          const daysText = formatDaysSummary(selectedDays);
+          finalSchedule = `${daysText} ${slotStart} - ${slotEnd}`;
+        }
       }
-    }
-    // Validar que cada bloque no tenga horas hacia atrás y que coincida con la duración de la clase
-    if (finalSchedule) {
-      const slotsToCheck = splitScheduleString(finalSchedule);
-      for (const slot of slotsToCheck) {
-        const comp = parseSlotStringToComponents(slot);
-        if (comp.start && comp.end) {
-          const diff = calculateMinutesBetween(comp.start, comp.end);
-          if (diff <= 0) {
-            setError(`Error en horario "${slot}": La hora de término (${comp.end}) no puede ser anterior o igual a la hora de inicio (${comp.start}).`);
-            setSaving(false);
-            return;
-          }
-          if (diff !== formDuration) {
-            setError(`Error en bloque "${slot}": Dura ${diff} minutos, pero la clase está configurada para ${formDuration} minutos. El bloque debe coincidir con la duración de la clase.`);
-            setSaving(false);
-            return;
+      // Validar que cada bloque no tenga horas hacia atrás y que coincida con la duración de la clase
+      if (finalSchedule) {
+        const slotsToCheck = splitScheduleString(finalSchedule);
+        for (const slot of slotsToCheck) {
+          const comp = parseSlotStringToComponents(slot);
+          if (comp.start && comp.end) {
+            const diff = calculateMinutesBetween(comp.start, comp.end);
+            if (diff <= 0) {
+              setError(`Error en horario "${slot}": La hora de término (${comp.end}) no puede ser anterior o igual a la hora de inicio (${comp.start}).`);
+              setSaving(false);
+              return;
+            }
+            if (diff !== formDuration) {
+              setError(`Error en bloque "${slot}": Dura ${diff} minutos, pero la clase está configurada para ${formDuration} minutos. El bloque debe coincidir con la duración de la clase.`);
+              setSaving(false);
+              return;
+            }
           }
         }
       }
     }
 
     payload.schedule = finalSchedule || null;
+    payload.showInstructor = formShowInstructor;
+    payload.showSchedule = formScheduleMode === 'fixed' && formShowSchedule;
+    payload.scheduleMode = formScheduleMode;
 
     try {
       const response = await fetch('/api/services', {
@@ -8845,9 +8865,14 @@ function ServicesModule({ demo }: { demo: (message: string) => void }) {
                   }}>
                     <span>👤</span>
                     <span>Instructor: <strong>{s.instructor_name}</strong></span>
+                    {s.show_instructor === false && (
+                      <span style={{ fontSize: '10px', background: '#fee2e2', color: '#991b1b', borderRadius: '4px', padding: '1px 5px', fontWeight: 700 }}>
+                        Oculto al alumno
+                      </span>
+                    )}
                   </div>
                 )}
-                {s.schedule ? (
+                {s.schedule && s.schedule !== 'null' && s.show_schedule !== false && s.schedule_mode !== 'flexible' ? (
                   <div style={{
                     margin: '6px 0 10px',
                     padding: '6px 10px',
@@ -8865,15 +8890,20 @@ function ServicesModule({ demo }: { demo: (message: string) => void }) {
                   </div>
                 ) : (
                   <div style={{
-                    margin: '4px 0 8px',
-                    fontSize: '11px',
-                    color: '#94a3b8',
-                    display: 'flex',
+                    margin: '6px 0 10px',
+                    padding: '6px 10px',
+                    background: '#f0f9ff',
+                    borderRadius: '8px',
+                    fontSize: '12px',
+                    color: '#0369a1',
+                    display: 'inline-flex',
                     alignItems: 'center',
-                    gap: '4px',
+                    gap: '6px',
+                    border: '1px solid #bae6fd',
+                    fontWeight: 600,
                   }}>
-                    <span>🕒</span>
-                    <span>Sin horario fijado</span>
+                    <span>💬</span>
+                    <span>Horario a coordinar con el instructor</span>
                   </div>
                 )}
                 <div className="service-details">
@@ -9043,6 +9073,24 @@ function ServicesModule({ demo }: { demo: (message: string) => void }) {
                     </small>
                   ) : null;
                 })()}
+
+                <div style={{ marginTop: '10px', display: 'flex', alignItems: 'center', gap: '8px', background: '#ffffff', padding: '8px 10px', borderRadius: '8px', border: '1px solid #cbd5e1' }}>
+                  <input
+                    type="checkbox"
+                    id="formShowInstructorCheck"
+                    checked={formShowInstructor}
+                    onChange={e => setFormShowInstructor(e.target.checked)}
+                    style={{ width: '16px', height: '16px', cursor: 'pointer', accentColor: '#18181b', margin: 0 }}
+                  />
+                  <label htmlFor="formShowInstructorCheck" style={{ margin: 0, fontSize: '12px', fontWeight: 600, color: '#334155', cursor: 'pointer', userSelect: 'none' }}>
+                    Mostrar nombre del instructor en la reserva online
+                  </label>
+                </div>
+                {!formShowInstructor && (
+                  <small style={{ color: '#64748b', fontSize: '11px', display: 'block', marginTop: '4px' }}>
+                    ℹ️ El nombre del instructor estará oculto para el alumno; el sistema lo asignará internamente.
+                  </small>
+                )}
               </label>
 
               <div
@@ -9060,22 +9108,109 @@ function ServicesModule({ demo }: { demo: (message: string) => void }) {
                 }}
               >
                 <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                    <span style={{ fontSize: '12px', fontWeight: 700, color: '#1e293b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                    <span style={{ fontSize: '13px', fontWeight: 700, color: '#1e293b', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                       🗓️ Horario de la Clase
                     </span>
-                    {scheduleSlots.length > 0 && (
+                    {formScheduleMode === 'fixed' && scheduleSlots.length > 0 && (
                       <span style={{ fontSize: '11px', background: '#dbeafe', color: '#1e40af', padding: '2px 8px', borderRadius: '12px', fontWeight: 600 }}>
                         {scheduleSlots.length} {scheduleSlots.length === 1 ? 'bloque configurado' : 'bloques configurados'}
                       </span>
                     )}
                   </div>
-                  <small style={{ color: '#64748b', fontSize: '12px', display: 'block' }}>
-                    Selecciona los días y el rango horario para agregar uno o más bloques a esta clase.
+                  <small style={{ color: '#64748b', fontSize: '12px', display: 'block', marginBottom: '12px' }}>
+                    Elige si esta clase tiene horarios fijos predefinidos o si el horario se acuerda directamente con el alumno tras reservar.
                   </small>
+
+                  {/* Selector de Modo: Horario Fijo vs Horario a Coordinar */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '8px' }}>
+                    <button
+                      type="button"
+                      onClick={() => setFormScheduleMode('fixed')}
+                      style={{
+                        padding: '10px 12px',
+                        borderRadius: '10px',
+                        border: formScheduleMode === 'fixed' ? '2px solid #18181b' : '1px solid #cbd5e1',
+                        background: formScheduleMode === 'fixed' ? '#18181b' : '#ffffff',
+                        color: formScheduleMode === 'fixed' ? '#ffffff' : '#475569',
+                        fontWeight: 700,
+                        fontSize: '13px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        gap: '3px',
+                        textAlign: 'center',
+                      }}
+                    >
+                      <span>🕒 Horario Fijo Establecido</span>
+                      <span style={{ fontSize: '11px', fontWeight: 400, opacity: 0.85 }}>
+                        Días y horas fijas públicas en agenda
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setFormScheduleMode('flexible')}
+                      style={{
+                        padding: '10px 12px',
+                        borderRadius: '10px',
+                        border: formScheduleMode === 'flexible' ? '2px solid #2563eb' : '1px solid #cbd5e1',
+                        background: formScheduleMode === 'flexible' ? '#eff6ff' : '#ffffff',
+                        color: formScheduleMode === 'flexible' ? '#1e40af' : '#475569',
+                        fontWeight: 700,
+                        fontSize: '13px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        gap: '3px',
+                        textAlign: 'center',
+                      }}
+                    >
+                      <span>💬 Horario a Coordinar (Flexible)</span>
+                      <span style={{ fontSize: '11px', fontWeight: 400, opacity: 0.85 }}>
+                        El instructor se comunica para acordar la hora
+                      </span>
+                    </button>
+                  </div>
                 </div>
 
-                {/* 1. Selector de Días */}
+                {formScheduleMode === 'flexible' ? (
+                  <div style={{ background: '#ffffff', border: '1px solid #bfdbfe', borderRadius: '10px', padding: '14px 16px', boxShadow: '0 1px 3px rgba(37,99,235,0.08)' }}>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+                      <span style={{ fontSize: '26px', lineHeight: 1 }}>💬</span>
+                      <div>
+                        <strong style={{ fontSize: '13px', color: '#1e40af', display: 'block', marginBottom: '4px' }}>
+                          Horario a coordinar con el alumno
+                        </strong>
+                        <p style={{ margin: 0, fontSize: '12px', color: '#334155', lineHeight: 1.5 }}>
+                          En la página pública de reservas, los alumnos verán <strong>"💬 Horario a coordinar con el instructor"</strong> en vez de bloques fijos. Podrán indicar su fecha estimada de inicio y preferencia de jornada (Mañana, Tarde, Noche). Una vez agendado, el instructor se comunicará directamente con el alumno para agendar los días y horas exactos.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#ffffff', padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1' }}>
+                      <input
+                        type="checkbox"
+                        id="formShowScheduleCheck"
+                        checked={formShowSchedule}
+                        onChange={e => setFormShowSchedule(e.target.checked)}
+                        style={{ width: '16px', height: '16px', cursor: 'pointer', accentColor: '#18181b', margin: 0 }}
+                      />
+                      <label htmlFor="formShowScheduleCheck" style={{ margin: 0, fontSize: '12px', fontWeight: 600, color: '#334155', cursor: 'pointer', userSelect: 'none' }}>
+                        Mostrar este horario públicamente a los alumnos al reservar
+                      </label>
+                    </div>
+                    {!formShowSchedule && (
+                      <small style={{ color: '#64748b', fontSize: '11px', marginTop: '-6px', display: 'block' }}>
+                        ℹ️ El horario se mantendrá como referencia interna, pero los alumnos verán "Horario a coordinar con el instructor".
+                      </small>
+                    )}
+
+                    {/* 1. Selector de Días */}
                 <div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                     <span style={{ fontSize: '12px', fontWeight: 600, color: '#334155' }}>
@@ -9506,7 +9641,9 @@ function ServicesModule({ demo }: { demo: (message: string) => void }) {
                     Se actualiza automáticamente con los bloques seleccionados, y también puedes editarlo manualmente si deseas añadir aclaraciones.
                   </small>
                 </div>
-              </div>
+              </>
+            )}
+          </div>
 
               <label className="full">Descripción de la clase o servicio
                 <textarea name="description" rows={3} defaultValue={editing?.description ?? ''} placeholder="Describe qué incluye el plan, beneficios o requisitos" />

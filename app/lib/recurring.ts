@@ -74,17 +74,51 @@ export function parseScheduleRules(scheduleStr: string | null | undefined): Sche
   return rules;
 }
 
+export function isMonthlyPlan(billingPeriod?: string | null, serviceName?: string | null): boolean {
+  if (billingPeriod === 'sesion' || billingPeriod === 'anual') {
+    return false;
+  }
+  if (billingPeriod === 'mensual') {
+    return true;
+  }
+  if (serviceName && /mensual/i.test(serviceName)) {
+    return true;
+  }
+  if (!billingPeriod) {
+    if (serviceName && /\bpack\b|\bclase suelta\b|\bsesi[oó]n [uú]nica\b/i.test(serviceName)) {
+      return false;
+    }
+    return true;
+  }
+  return false;
+}
+
 export function resolveTotalSessions(
   serviceName: string,
   billingPeriod?: string | null,
-  rules: ScheduleRule[] = []
+  rules: ScheduleRule[] = [],
+  refDateStr?: string
 ): number {
   const match = (serviceName || '').match(/(\d+)\s*(?:sesi[oó]n(?:es)?|clases?)/i);
-  if (match) return parseInt(match[1], 10);
+  if (match && !isMonthlyPlan(billingPeriod, serviceName)) {
+    return parseInt(match[1], 10);
+  }
 
-  if (billingPeriod === 'mensual') {
-    const totalWeeklyDays = rules.reduce((acc, r) => acc + r.days.length, 0);
-    return Math.max(1, (totalWeeklyDays || 1) * 4);
+  if (isMonthlyPlan(billingPeriod, serviceName) && rules.length > 0) {
+    const ref = refDateStr && /^\d{4}-\d{2}-\d{2}$/.test(refDateStr) ? refDateStr : new Date().toISOString().slice(0, 10);
+    const [y, m] = ref.split('-').map(Number);
+    const daysInMonth = new Date(y, m, 0).getDate();
+    const daySet = new Set<number>();
+    for (const r of rules) {
+      for (const d of r.days) daySet.add(d);
+    }
+    let count = 0;
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dt = new Date(y, m - 1, d, 12, 0, 0);
+      const iso = dt.getDay() === 0 ? 7 : dt.getDay();
+      if (daySet.has(iso)) count++;
+    }
+    return Math.max(1, count);
   }
 
   return 1;
@@ -100,19 +134,25 @@ export function calculateRecurringSessions(params: {
 }): GeneratedSessionSlot[] {
   const { serviceName, billingPeriod, schedule, startDate, startTime, maxSessions } = params;
   const rules = parseScheduleRules(schedule);
-  const total = maxSessions || resolveTotalSessions(serviceName, billingPeriod, rules);
 
-  if (total <= 1 || rules.length === 0) {
-    const [y, m, d] = startDate.split('-').map(Number);
-    const dt = new Date(y, m - 1, d);
+  const safeStartDate = startDate && /^\d{4}-\d{2}-\d{2}$/.test(startDate)
+    ? startDate
+    : new Date().toISOString().slice(0, 10);
+  const safeStartTime = startTime && /^\d{2}:\d{2}$/.test(startTime)
+    ? startTime
+    : '18:00';
+
+  if (rules.length === 0) {
+    const [y, m, d] = safeStartDate.split('-').map(Number);
+    const dt = new Date(y, m - 1, d, 12, 0, 0);
     const isoDay = dt.getDay() === 0 ? 7 : dt.getDay();
     const dayLabel = DAY_NAMES_SHORT[isoDay] || '';
     return [
       {
-        date: startDate,
-        time: startTime,
+        date: safeStartDate,
+        time: safeStartTime,
         dayName: dayLabel,
-        label: `${dayLabel} ${startTime}`.trim(),
+        label: `${dayLabel} ${safeStartTime}`.trim(),
       },
     ];
   }
@@ -124,19 +164,65 @@ export function calculateRecurringSessions(params: {
     }
   }
 
-  if (dayTimeMap.size === 0) {
+  const isMonthly = isMonthlyPlan(billingPeriod, serviceName);
+
+  // Si el plan es mensual y no se forzó un maxSessions fijo (por ejemplo por un pack específico),
+  // asignamos TODOS los días del mes que correspondan al horario establecido.
+  if (isMonthly && !maxSessions) {
+    const [targetYear, targetMonth] = safeStartDate.split('-').map(Number);
+    const daysInMonth = new Date(targetYear, targetMonth, 0).getDate();
+    const sessions: GeneratedSessionSlot[] = [];
+
+    for (let d = 1; d <= daysInMonth; d++) {
+      const curDate = new Date(targetYear, targetMonth - 1, d, 12, 0, 0);
+      const isoDay = curDate.getDay() === 0 ? 7 : curDate.getDay();
+      const dayStr = String(d).padStart(2, '0');
+      const monthStr = String(targetMonth).padStart(2, '0');
+      const dateStr = `${targetYear}-${monthStr}-${dayStr}`;
+
+      const isSelectedStartDate = dateStr === safeStartDate;
+
+      if (dayTimeMap.has(isoDay) || isSelectedStartDate) {
+        const scheduledTime = dayTimeMap.get(isoDay);
+        // Si el usuario reasignó la hora para su fecha de inicio, respetamos safeStartTime
+        const timeStr = isSelectedStartDate
+          ? (safeStartTime || scheduledTime || '18:00')
+          : (scheduledTime || safeStartTime || '18:00');
+        const dayLabel = DAY_NAMES_SHORT[isoDay] || '';
+        sessions.push({
+          date: dateStr,
+          time: timeStr,
+          dayName: dayLabel,
+          label: `${dayLabel} ${timeStr}`,
+        });
+      }
+    }
+
+    if (sessions.length > 0) {
+      sessions.sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time));
+      return sessions;
+    }
+  }
+
+  // Planes por sesión / packs o cuando se define un maxSessions específico
+  const total = maxSessions || resolveTotalSessions(serviceName, billingPeriod, rules, safeStartDate);
+  if (total <= 1) {
+    const [y, m, d] = safeStartDate.split('-').map(Number);
+    const dt = new Date(y, m - 1, d, 12, 0, 0);
+    const isoDay = dt.getDay() === 0 ? 7 : dt.getDay();
+    const dayLabel = DAY_NAMES_SHORT[isoDay] || '';
     return [
       {
-        date: startDate,
-        time: startTime,
-        dayName: '',
-        label: startTime,
+        date: safeStartDate,
+        time: safeStartTime,
+        dayName: dayLabel,
+        label: `${dayLabel} ${safeStartTime}`.trim(),
       },
     ];
   }
 
-  const [y, m, d] = startDate.split('-').map(Number);
-  const cur = new Date(y, m - 1, d);
+  const [y, m, d] = safeStartDate.split('-').map(Number);
+  const cur = new Date(y, m - 1, d, 12, 0, 0);
   const sessions: GeneratedSessionSlot[] = [];
   let safetyLimit = 200;
 
@@ -147,11 +233,13 @@ export function calculateRecurringSessions(params: {
     const day = String(cur.getDate()).padStart(2, '0');
     const dateStr = `${year}-${month}-${day}`;
 
-    const isFirstSession = sessions.length === 0 && dateStr === startDate;
+    const isFirstSession = sessions.length === 0 && dateStr === safeStartDate;
 
     if (isFirstSession || dayTimeMap.has(isoDay)) {
-      // Si es la primera sesión y el usuario reasignó la hora, respetamos su horario reasignado
-      const timeStr = isFirstSession ? (startTime || dayTimeMap.get(isoDay) || '18:00') : (dayTimeMap.get(isoDay) || startTime || '18:00');
+      const scheduledTime = dayTimeMap.get(isoDay);
+      const timeStr = isFirstSession
+        ? (safeStartTime || scheduledTime || '18:00')
+        : (scheduledTime || safeStartTime || '18:00');
       const dayLabel = DAY_NAMES_SHORT[isoDay] || '';
       sessions.push({
         date: dateStr,
@@ -167,10 +255,10 @@ export function calculateRecurringSessions(params: {
     ? sessions
     : [
         {
-          date: startDate,
-          time: startTime,
+          date: safeStartDate,
+          time: safeStartTime,
           dayName: '',
-          label: startTime,
+          label: safeStartTime,
         },
       ];
 }

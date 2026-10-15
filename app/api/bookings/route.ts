@@ -3,7 +3,7 @@ import { getChatGPTUser } from '../../chatgpt-auth';
 import { getSupabase } from '../../lib/supabase';
 import { parseChileDateTime } from '../../lib/dates';
 import { getBusinessForUser } from '../../lib/tenant';
-import { calculateRecurringSessions } from '../../lib/recurring';
+import { calculateRecurringSessions, isMonthlyPlan } from '../../lib/recurring';
 
 async function requireApiUser() {
   const user = await getChatGPTUser();
@@ -190,11 +190,14 @@ export async function POST(request: Request) {
   const isIncludedInPlan = customer?.membership_status === 'active';
   const paymentStatus = isIncludedInPlan ? 'paid' : 'unpaid';
 
-  const firstDt = parseChileDateTime(date, time);
-  if (!Number.isNaN(firstDt.getTime()) && firstDt.getTime() < Date.now() - 5 * 60 * 1000) {
-    return NextResponse.json({
-      error: 'No se pueden agendar reservas en fechas u horarios pasados.',
-    }, { status: 400 });
+  const isMonthly = isMonthlyPlan(serviceRow.billing_period, serviceRow.name);
+  if (!isMonthly) {
+    const firstDt = parseChileDateTime(date, time);
+    if (!Number.isNaN(firstDt.getTime()) && firstDt.getTime() < Date.now() - 5 * 60 * 1000) {
+      return NextResponse.json({
+        error: 'No se pueden agendar reservas en fechas u horarios pasados.',
+      }, { status: 400 });
+    }
   }
 
   // Generate all recurring sessions for this service pack / schedule
@@ -319,13 +322,14 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: insertError?.message || 'Error al guardar reserva.' }, { status: 500 });
   }
 
-  const firstSession = validSessions[0];
-  const classDateStr = firstSession.start.toLocaleDateString('es-CL', { weekday: 'long', day: 'numeric', month: 'long' });
-  const classTimeStr = firstSession.start.toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' });
+  const upcomingSessions = validSessions.filter(s => s.start.getTime() >= Date.now() - 5 * 60 * 1000);
+  const firstUpcomingSession = upcomingSessions.length > 0 ? upcomingSessions[0] : validSessions[0];
+  const classDateStr = firstUpcomingSession.start.toLocaleDateString('es-CL', { weekday: 'long', day: 'numeric', month: 'long' });
+  const classTimeStr = firstUpcomingSession.start.toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' });
 
   if (customer) {
     const confirmMsg = validSessions.length > 1
-      ? `Hola ${customer.name}! Tu inscripción para ${serviceRow.name} con ${professional.name} ha sido confirmada para sus ${validSessions.length} sesiones a partir del ${classDateStr} a las ${classTimeStr}.`
+      ? `Hola ${customer.name}! Tu inscripción para ${serviceRow.name} con ${professional.name} ha sido confirmada para todas sus ${validSessions.length} clases del mes. Tu próxima sesión es el ${classDateStr} a las ${classTimeStr}.`
       : `Hola ${customer.name}! Tu cupo para la clase de ${serviceRow.name} con ${professional.name} ha sido confirmado para el ${classDateStr} a las ${classTimeStr}.`;
 
     await supabase.from('notifications').insert({
@@ -345,7 +349,7 @@ export async function POST(request: Request) {
     booking: insertedRows[0],
     bookingsCount: validSessions.length,
     message: validSessions.length > 1
-      ? `Se inscribió al alumno en las ${validSessions.length} clases del plan correctamente.`
+      ? `Se inscribió al alumno en las ${validSessions.length} clases del mes correctamente.`
       : 'Inscripción confirmada.',
   }, { status: 201 });
 }

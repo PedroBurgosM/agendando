@@ -22,6 +22,11 @@ type Catalog = {
     capacity?: number;
     billing_period?: string;
     schedule?: string | null;
+    instructor_id?: number | null;
+    instructor_name?: string | null;
+    show_instructor?: boolean;
+    show_schedule?: boolean;
+    schedule_mode?: 'fixed' | 'flexible';
   }>;
   team: Array<{
     id: number;
@@ -48,6 +53,7 @@ export default function BookingPage() {
     studentWaUrl?: string | null;
     customerEmail?: string;
     customerPhone?: string;
+    bookingsCount?: number;
   } | null>(null);
 
   const [businessSlug, setBusinessSlug] = useState<string>('');
@@ -69,13 +75,17 @@ export default function BookingPage() {
         setData(catalog);
         const firstService = catalog.services[0];
         setService(firstService?.id ?? null);
-        setProfessional(catalog.team[0]?.id ?? null);
-        if (firstService?.schedule) {
+        const defaultProfId = firstService?.instructor_id || catalog.team[0]?.id || null;
+        setProfessional(defaultProfId);
+        if (firstService?.schedule && firstService.schedule !== 'null' && firstService.show_schedule !== false && firstService.schedule_mode !== 'flexible') {
           const slots = parseScheduleToSlots(firstService.schedule);
           if (slots.length > 0) {
             setSelectedDate(slots[0].date);
             setSlot(slots[0].time);
           }
+        } else {
+          setSelectedDate(new Date().toISOString().slice(0, 10));
+          setSlot('A convenir');
         }
       })
       .catch(() => setError('La página de reservas no está disponible.'));
@@ -105,6 +115,7 @@ export default function BookingPage() {
         studentWaUrl?: string | null;
         customerEmail?: string;
         customerPhone?: string;
+        bookingsCount?: number;
       };
       if (!r.ok) throw new Error(d.error ?? 'No se pudo confirmar tu reserva.');
       setConfirmationData(d);
@@ -115,6 +126,8 @@ export default function BookingPage() {
       setSaving(false);
     }
   }
+
+  const chosen = data?.services.find(s => s.id === service);
 
   if (done) {
     return (
@@ -136,8 +149,20 @@ export default function BookingPage() {
               lineHeight: 1.6
             }}>
               <div><strong>Clase:</strong> {confirmationData.serviceName}</div>
-              <div><strong>Instructor/a:</strong> {confirmationData.professionalName}</div>
-              <div><strong>Fecha y hora:</strong> {confirmationData.classDateStr} a las {confirmationData.classTimeStr} hrs</div>
+              {chosen?.show_instructor !== false && confirmationData.professionalName ? (
+                <div><strong>Instructor/a:</strong> {confirmationData.professionalName}</div>
+              ) : null}
+              {confirmationData.bookingsCount && confirmationData.bookingsCount > 1 ? (
+                <div><strong>Clases reservadas:</strong> Las {confirmationData.bookingsCount} clases del mes</div>
+              ) : null}
+              {confirmationData.classTimeStr && (confirmationData.classTimeStr.includes('coordinar') || confirmationData.classTimeStr.includes('convenir')) ? (
+                <>
+                  <div><strong>Fecha estimada:</strong> {confirmationData.classDateStr}</div>
+                  <div><strong>Horario:</strong> A coordinar directamente con tu instructor</div>
+                </>
+              ) : (
+                <div><strong>Próxima clase:</strong> {confirmationData.classDateStr} a las {confirmationData.classTimeStr} hrs</div>
+              )}
               <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid #e4e4e7', fontSize: '13px', color: '#52525b' }}>
                 🔔 <strong>Notificaciones automáticas:</strong>
                 <br />• Se registró el recordatorio para tu instructor/a <strong>{confirmationData.professionalName}</strong>.
@@ -200,8 +225,6 @@ export default function BookingPage() {
     );
   }
 
-  const chosen = data.services.find(s => s.id === service);
-
   return (
     <main className="booking-page">
       <header className="booking-header">
@@ -252,12 +275,18 @@ export default function BookingPage() {
                   className={service === s.id ? 'selected' : ''}
                   onClick={() => {
                     setService(s.id);
-                    if (s.schedule) {
+                    if (s.instructor_id) {
+                      setProfessional(s.instructor_id);
+                    }
+                    if (s.schedule && s.schedule !== 'null' && s.show_schedule !== false && s.schedule_mode !== 'flexible') {
                       const slots = parseScheduleToSlots(s.schedule);
                       if (slots.length > 0) {
                         setSelectedDate(slots[0].date);
                         setSlot(slots[0].time);
                       }
+                    } else {
+                      setSelectedDate(new Date().toISOString().slice(0, 10));
+                      setSlot('A convenir');
                     }
                   }}
                 >
@@ -276,13 +305,20 @@ export default function BookingPage() {
                         {s.billing_period === 'anual' ? '🗓️ Anual' : s.billing_period === 'sesion' ? '🎟️ Por Sesión' : '📅 Mensual'}
                       </span>
                     </div>
-                    <small>
-                      {isGroup ? `👥 Grupal · Cupo max: ${s.capacity || 10} alumnos` : '👤 Clase Individual'} · {s.description || s.mode}
+                    <small style={{ display: 'block', marginTop: '2px', color: '#475569' }}>
+                      {isGroup ? `👥 Grupal · Cupo max: ${s.capacity || 10} alumnos` : '👤 Clase Individual'}
+                      {s.show_instructor !== false && s.instructor_name ? ` · 👤 ${s.instructor_name}` : ''}
+                      {s.description ? ` · ${s.description}` : ''}
                     </small>
-                    {s.schedule && (
-                      <div style={{ fontSize: '11px', color: '#4338ca', fontWeight: 600, marginTop: '2px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                    {s.schedule && s.schedule !== 'null' && s.show_schedule !== false && s.schedule_mode !== 'flexible' ? (
+                      <div style={{ fontSize: '11px', color: '#4338ca', fontWeight: 600, marginTop: '3px', display: 'flex', alignItems: 'center', gap: '4px' }}>
                         <span>🕒</span>
                         <span>{s.schedule}</span>
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: '11px', color: '#0369a1', background: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '6px', padding: '2px 8px', fontWeight: 600, marginTop: '4px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                        <span>💬</span>
+                        <span>Horario a coordinar con el instructor</span>
                       </div>
                     )}
                     <em>{s.duration_minutes} min</em>
@@ -298,34 +334,38 @@ export default function BookingPage() {
             })}
           </div>
 
-          <div className="booking-step">
-            <span>2</span>
-            <div>
-              <h2>Elige un instructor</h2>
-              <p>Selecciona con quién tomarás la clase.</p>
-            </div>
-          </div>
-
-          <div className="people-list">
-            {data.team.map(p => (
-              <button
-                type="button"
-                key={p.id}
-                className={professional === p.id ? 'selected' : ''}
-                onClick={() => setProfessional(p.id)}
-              >
-                <span style={{ color: p.color }}>{p.name.split(/\s+/).map(x => x[0]).slice(0, 2).join('')}</span>
+          {(!chosen || chosen.show_instructor !== false) && (
+            <>
+              <div className="booking-step">
+                <span>2</span>
                 <div>
-                  <strong>{p.name}</strong>
-                  <small>{p.role}</small>
+                  <h2>Elige un instructor</h2>
+                  <p>Selecciona con quién tomarás la clase.</p>
                 </div>
-                <i>{professional === p.id ? '✓' : ''}</i>
-              </button>
-            ))}
-          </div>
+              </div>
+
+              <div className="people-list">
+                {data.team.map(p => (
+                  <button
+                    type="button"
+                    key={p.id}
+                    className={professional === p.id ? 'selected' : ''}
+                    onClick={() => setProfessional(p.id)}
+                  >
+                    <span style={{ color: p.color }}>{p.name.split(/\s+/).map(x => x[0]).slice(0, 2).join('')}</span>
+                    <div>
+                      <strong>{p.name}</strong>
+                      <small>{p.role}</small>
+                    </div>
+                    <i>{professional === p.id ? '✓' : ''}</i>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
 
           <div className="booking-step">
-            <span>3</span>
+            <span>{(!chosen || chosen.show_instructor !== false) ? '3' : '2'}</span>
             <div>
               <h2>Fecha, horario y tus datos</h2>
               <p>Los cupos se validan y aseguran inmediatamente.</p>
@@ -333,7 +373,7 @@ export default function BookingPage() {
           </div>
 
           <div className="form-grid public-contact">
-            {chosen?.schedule ? (
+            {chosen?.schedule && chosen.schedule !== 'null' && chosen.show_schedule !== false && chosen.schedule_mode !== 'flexible' ? (
               <div className="full" style={{ background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '10px', padding: '12px 14px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px', marginBottom: '10px' }}>
                   <span style={{ fontSize: '13px', fontWeight: 600, color: '#1e293b' }}>
@@ -420,29 +460,98 @@ export default function BookingPage() {
                   </div>
                 </div>
                 <input type="hidden" name="date" value={selectedDate} />
+
+                {(() => {
+                  const recurringPreview = chosen ? calculateRecurringSessions({
+                    serviceName: chosen.name,
+                    billingPeriod: chosen.billing_period,
+                    schedule: chosen.schedule,
+                    startDate: selectedDate || new Date().toISOString().slice(0, 10),
+                    startTime: slot || '18:00',
+                  }) : [];
+
+                  if (recurringPreview.length <= 1) return null;
+
+                  return (
+                    <div style={{ marginTop: '12px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '10px', padding: '10px 12px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                        <span style={{ fontSize: '11px', fontWeight: 700, color: '#166534', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                          ✓ Plan mensual completo: Incluye las {recurringPreview.length} clases del mes
+                        </span>
+                        <span style={{ fontSize: '11px', fontWeight: 600, color: '#15803d' }}>
+                          {recurringPreview.length} clases
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', maxHeight: '110px', overflowY: 'auto' }}>
+                        {recurringPreview.map((s, idx) => (
+                          <span
+                            key={idx}
+                            style={{
+                              background: '#ffffff',
+                              border: '1px solid #86efac',
+                              borderRadius: '6px',
+                              padding: '3px 7px',
+                              fontSize: '11px',
+                              fontWeight: 600,
+                              color: '#166534',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px'
+                            }}
+                          >
+                            <span style={{ fontSize: '10px', color: '#15803d', fontWeight: 700 }}>#{idx + 1}</span>
+                            <span>{s.dayName} {s.date.slice(5)} · {s.time}</span>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             ) : (
-              <>
-                <label>Fecha
-                  <input
-                    name="date"
-                    type="date"
-                    min={new Date().toISOString().slice(0, 10)}
-                    value={selectedDate}
-                    onChange={(e) => setSelectedDate(e.target.value)}
-                    required
-                  />
-                </label>
-                <label>Hora de la clase
-                  <div className="slots">
-                    {['08:00', '09:30', '11:00', '14:00', '16:00', '18:00', '19:30'].map(s => (
-                      <button type="button" className={slot === s ? 'selected' : ''} onClick={() => setSlot(s)} key={s}>
-                        {s}
-                      </button>
-                    ))}
+              <div className="full" style={{ background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: '10px', padding: '14px', marginBottom: '8px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#0369a1', fontWeight: 700, fontSize: '13px', marginBottom: '6px' }}>
+                  <span>💬</span>
+                  <span>Horario a coordinar con el instructor</span>
+                </div>
+                <p style={{ fontSize: '12px', color: '#475569', margin: '0 0 12px', lineHeight: 1.5 }}>
+                  Esta clase no tiene un horario rígido previo. Una vez confirmada tu reserva, el instructor se comunicará directamente contigo vía WhatsApp o llamada para coordinar juntos los días y horas exactas.
+                </p>
+
+                <div className="booking-reschedule-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                  <div>
+                    <label style={{ fontSize: '11px', fontWeight: 600, color: '#334155', display: 'block', marginBottom: '3px' }}>
+                      Fecha deseada de inicio:
+                    </label>
+                    <input
+                      name="date"
+                      type="date"
+                      min={new Date().toISOString().slice(0, 10)}
+                      value={selectedDate}
+                      onChange={(e) => setSelectedDate(e.target.value)}
+                      required
+                      style={{ height: '38px', padding: '0 10px', borderRadius: '6px', border: '1px solid #cbd5e1', width: '100%', fontSize: '13px', fontWeight: 600, background: '#ffffff', color: '#0f172a' }}
+                    />
                   </div>
-                </label>
-              </>
+                  <div>
+                    <label style={{ fontSize: '11px', fontWeight: 600, color: '#334155', display: 'block', marginBottom: '3px' }}>
+                      Preferencia de horario:
+                    </label>
+                    <select
+                      value={slot}
+                      onChange={(e) => setSlot(e.target.value)}
+                      style={{ height: '38px', padding: '0 10px', borderRadius: '6px', border: '1px solid #cbd5e1', width: '100%', fontSize: '13px', fontWeight: 600, background: '#ffffff', color: '#0f172a' }}
+                    >
+                      <option value="A convenir">A convenir / Por definir</option>
+                      <option value="Mañanas (08:00 - 12:00)">Mañanas (08:00 - 12:00)</option>
+                      <option value="Mediodía (12:00 - 15:00)">Mediodía (12:00 - 15:00)</option>
+                      <option value="Tardes (15:00 - 18:00)">Tardes (15:00 - 18:00)</option>
+                      <option value="Noches (18:00 - 21:00)">Noches (18:00 - 21:00)</option>
+                    </select>
+                  </div>
+                </div>
+                <input type="hidden" name="time" value={slot || 'A convenir'} />
+              </div>
             )}
             <label className="full">Nombre del alumno
               <input name="customerName" required placeholder="Tu nombre y apellido" />
