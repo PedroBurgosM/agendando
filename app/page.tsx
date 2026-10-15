@@ -5416,16 +5416,9 @@ function ClientsModule({ demo }: { demo: (message: string) => void }) {
   function handleOpenNewStudent() {
     setEditing(null);
     setError('');
-    if (services.length > 0) {
-      const first = services[0];
-      setSelectedServiceId(String(first.id));
-      setPlanNameInput(first.name);
-      setMonthlyFeeInput(first.price_clp);
-    } else {
-      setSelectedServiceId('custom');
-      setPlanNameInput('Mensualidad Regular');
-      setMonthlyFeeInput(45000);
-    }
+    setSelectedServiceId('none');
+    setPlanNameInput('');
+    setMonthlyFeeInput(0);
     setShowNew(true);
   }
 
@@ -5435,19 +5428,33 @@ function ClientsModule({ demo }: { demo: (message: string) => void }) {
     const matched = services.find(s => s.name === c.plan_name || `Plan ${s.name}` === c.plan_name);
     if (matched) {
       setSelectedServiceId(String(matched.id));
+      setPlanNameInput(matched.name);
+      setMonthlyFeeInput(c.monthly_fee ?? matched.price_clp);
+    } else if (c.plan_name && c.plan_name !== 'Sin clase asignada' && c.plan_name !== 'Plan Regular') {
+      setSelectedServiceId('custom');
+      setPlanNameInput(c.plan_name);
+      setMonthlyFeeInput(c.monthly_fee ?? 0);
     } else {
-      setSelectedServiceId(c.plan_name ? 'custom' : (services[0] ? String(services[0].id) : 'custom'));
+      setSelectedServiceId('none');
+      setPlanNameInput('');
+      setMonthlyFeeInput(0);
     }
-    setPlanNameInput(c.plan_name ?? (services[0]?.name || 'Mensualidad Regular'));
-    setMonthlyFeeInput(c.monthly_fee ?? (services[0]?.price_clp || 45000));
     setShowNew(true);
   }
 
   function handleServiceChange(serviceIdVal: string) {
     setSelectedServiceId(serviceIdVal);
+    if (serviceIdVal === 'none' || !serviceIdVal) {
+      setPlanNameInput('');
+      setMonthlyFeeInput(0);
+      return;
+    }
     if (serviceIdVal === 'custom') {
       if (!planNameInput) {
         setPlanNameInput('Tarifa Personalizada');
+      }
+      if (!monthlyFeeInput) {
+        setMonthlyFeeInput(45000);
       }
       return;
     }
@@ -5567,9 +5574,12 @@ function ClientsModule({ demo }: { demo: (message: string) => void }) {
     if (s) {
       payload.planName = s.name;
       payload.monthlyFee = String(s.price_clp);
+    } else if (selectedServiceId === 'custom') {
+      payload.planName = planNameInput.trim() || 'Tarifa Personalizada';
+      payload.monthlyFee = String(monthlyFeeInput || 0);
     } else {
-      if (!payload.planName) payload.planName = planNameInput || 'Mensualidad Regular';
-      if (!payload.monthlyFee) payload.monthlyFee = String(monthlyFeeInput || 45000);
+      payload.planName = '';
+      payload.monthlyFee = '0';
     }
 
     try {
@@ -5765,15 +5775,28 @@ function ClientsModule({ demo }: { demo: (message: string) => void }) {
                       </div>
                     </td>
                     <td>
-                      <strong>{c.plan_name || 'Plan Regular'}</strong>
-                      <small>${Number(c.monthly_fee).toLocaleString('es-CL')} / mes</small>
+                      <strong>{c.plan_name ? c.plan_name : 'Sin clase fija'}</strong>
+                      {Number(c.monthly_fee) > 0 ? (
+                        <small>${Number(c.monthly_fee).toLocaleString('es-CL')} / mes</small>
+                      ) : (
+                        <small style={{ color: '#64748b' }}>A convenir / Por sesión</small>
+                      )}
                     </td>
                     <td>
                       <span className={`status-badge ${badge.cls}`}>{badge.label}</span>
                     </td>
                     <td>
-                      <strong>{formatDate(c.next_payment_due)}</strong>
-                      <small>Día {c.payment_due_day || 5} de cada mes</small>
+                      {Number(c.monthly_fee) > 0 ? (
+                        <>
+                          <strong>{formatDate(c.next_payment_due)}</strong>
+                          <small>Día {c.payment_due_day || 5} de cada mes</small>
+                        </>
+                      ) : (
+                        <>
+                          <strong style={{ color: '#64748b', fontWeight: 500 }}>Sin mensualidad fija</strong>
+                          <small>Cobro según agenda</small>
+                        </>
+                      )}
                     </td>
                     <td>
                       <strong>{c.email}</strong>
@@ -5917,11 +5940,13 @@ function ClientsModule({ demo }: { demo: (message: string) => void }) {
             <div className="drawer-stat-banner">
               <div className="drawer-stat-box">
                 <small>Plan actual</small>
-                <strong>{selected.plan_name || 'Regular'}</strong>
+                <strong>{selected.plan_name || 'Sin clase asignada'}</strong>
               </div>
               <div className="drawer-stat-box">
                 <small>Cuota mensual</small>
-                <strong style={{ color: '#18875e' }}>${Number(selected.monthly_fee).toLocaleString('es-CL')}</strong>
+                <strong style={{ color: Number(selected.monthly_fee) > 0 ? '#18875e' : '#64748b' }}>
+                  {Number(selected.monthly_fee) > 0 ? `$${Number(selected.monthly_fee).toLocaleString('es-CL')}` : 'Sin cuota fija'}
+                </strong>
               </div>
             </div>
 
@@ -6213,7 +6238,7 @@ function ClientsModule({ demo }: { demo: (message: string) => void }) {
                 </div>
               </div>
 
-              <label className="full">Clase o Servicio asignado
+              <label className="full">Clase o Servicio asignado (Opcional)
                 <select
                   value={selectedServiceId}
                   onChange={e => handleServiceChange(e.target.value)}
@@ -6228,20 +6253,23 @@ function ClientsModule({ demo }: { demo: (message: string) => void }) {
                     fontWeight: 500
                   }}
                 >
-                  {services.length === 0 ? (
-                    <option value="custom">Sin clases creadas aún (Tarifa manual)</option>
-                  ) : (
-                    <>
-                      <option value="" disabled>-- Selecciona la clase o disciplina --</option>
+                  <option value="none">-- Sin clase asignada (Opcional - solo registrar alumno) --</option>
+                  {services.length > 0 && (
+                    <optgroup label="Clases disponibles">
                       {services.map(s => (
                         <option key={s.id} value={s.id}>
                           {s.name} · {s.class_type === 'grupal' ? `👥 Grupal (Cap: ${s.capacity || 10})` : '👤 Individual'} {s.schedule ? `· 🕒 ${s.schedule}` : ''} · ${Number(s.price_clp).toLocaleString('es-CL')} / mes
                         </option>
                       ))}
-                      <option value="custom">⚙️ Otro plan / Tarifa personalizada...</option>
-                    </>
+                    </optgroup>
                   )}
+                  <option value="custom">⚙️ Otro plan / Tarifa personalizada...</option>
                 </select>
+                <small style={{ color: '#64748b', fontSize: '11px', marginTop: '4px', display: 'block' }}>
+                  {selectedServiceId === 'none'
+                    ? '✨ Modo dinámico: El alumno quedará guardado en tu sistema y podrás agendarlo o asignarle clases en cualquier momento desde la Agenda.'
+                    : 'ℹ️ Asigna la clase y mensualidad predeterminada para el alumno.'}
+                </small>
               </label>
               {selectedServiceId === 'custom' ? (
                 <>
@@ -6267,15 +6295,24 @@ function ClientsModule({ demo }: { demo: (message: string) => void }) {
                     />
                   </label>
                 </>
-              ) : (
+              ) : selectedServiceId !== 'none' ? (
                 <>
                   <input type="hidden" name="planName" value={planNameInput} />
                   <input type="hidden" name="monthlyFee" value={monthlyFeeInput} />
                 </>
+              ) : (
+                <>
+                  <input type="hidden" name="planName" value="" />
+                  <input type="hidden" name="monthlyFee" value="0" />
+                </>
               )}
-              <label className={editing ? '' : 'full'}>Día de vencimiento (1 al 31)
-                <input name="paymentDueDay" type="number" min="1" max="31" defaultValue={editing?.payment_due_day ?? 5} placeholder="5" />
-              </label>
+              {selectedServiceId !== 'none' ? (
+                <label className={editing ? '' : 'full'}>Día de vencimiento (1 al 31)
+                  <input name="paymentDueDay" type="number" min="1" max="31" defaultValue={editing?.payment_due_day ?? 5} placeholder="5" />
+                </label>
+              ) : (
+                <input type="hidden" name="paymentDueDay" value={editing?.payment_due_day ?? 5} />
+              )}
               {editing && (
                 <label>Estado de mensualidad
                   <select name="membershipStatus" defaultValue={editing.membership_status}>

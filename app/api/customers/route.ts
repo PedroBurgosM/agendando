@@ -44,7 +44,7 @@ export async function GET(request: Request) {
       dueTimeSec = Math.floor(new Date(c.next_payment_due).getTime() / 1000);
     }
 
-    if (computedStatus !== 'inactive' && dueTimeSec) {
+    if (computedStatus !== 'inactive' && dueTimeSec && Number(c.monthly_fee) > 0) {
       if (nowSec > dueTimeSec) {
         computedStatus = 'overdue';
       } else if (dueTimeSec - nowSec <= 5 * 86400) {
@@ -56,6 +56,8 @@ export async function GET(request: Request) {
       } else {
         computedStatus = 'active';
       }
+    } else if (computedStatus !== 'inactive' && (!c.monthly_fee || Number(c.monthly_fee) <= 0)) {
+      computedStatus = 'active';
     }
 
     const validBookings = (c.bookings || []).filter((b: any) => b.status !== 'cancelled');
@@ -135,8 +137,8 @@ export async function POST(request: Request) {
   let email = String(body.email ?? '').trim().toLowerCase();
   const phone = String(body.phone ?? '').trim();
   const notes = String(body.notes ?? '').trim();
-  const planName = String(body.planName ?? 'Mensualidad Regular').trim();
-  const monthlyFee = Number(body.monthlyFee ?? 0);
+  const planName = body.planName !== undefined ? String(body.planName).trim() : '';
+  const monthlyFee = Math.max(0, Number(body.monthlyFee ?? 0));
   const paymentDueDay = Math.min(Math.max(Number(body.paymentDueDay ?? 5), 1), 31);
   const membershipStatus = String(body.membershipStatus ?? 'active');
   const notifyEmail = body.notifyEmail !== false;
@@ -183,7 +185,7 @@ export async function POST(request: Request) {
       email,
       phone: phone || null,
       notes: notes || null,
-      plan_name: planName,
+      plan_name: planName || null,
       monthly_fee: monthlyFee,
       payment_due_day: paymentDueDay,
       membership_status: membershipStatus,
@@ -279,8 +281,8 @@ export async function PATCH(request: Request) {
     email,
     phone: phone || null,
     notes: notes || null,
-    plan_name: planName || 'Plan Regular',
-    monthly_fee: monthlyFee,
+    plan_name: planName || null,
+    monthly_fee: Number.isNaN(monthlyFee) ? 0 : Math.max(0, monthlyFee),
     payment_due_day: paymentDueDay,
     membership_status: membershipStatus,
     next_payment_due: nextPaymentDueIso,
