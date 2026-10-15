@@ -803,33 +803,12 @@ function AdminProfileModal({
 
   return (
     <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: 'rgba(15, 23, 42, 0.65)',
-        backdropFilter: 'blur(3px)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 1000,
-        padding: '20px',
-      }}
+      className="admin-profile-modal-backdrop"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div
-        style={{
-          background: '#fff',
-          borderRadius: '16px',
-          width: '100%',
-          maxWidth: '520px',
-          maxHeight: '90vh',
-          overflowY: 'auto',
-          padding: '28px',
-          boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.2)',
-        }}
-      >
+      <div className="admin-profile-modal-card">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
           <div>
             <h2 style={{ fontSize: '20px', fontWeight: 700, color: '#0f172a', margin: 0 }}>
@@ -1047,7 +1026,7 @@ function AdminProfileModal({
               </div>
             )}
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '8px' }}>
+            <div className="admin-profile-modal-footer" style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '8px' }}>
               <button
                 type="button"
                 onClick={onClose}
@@ -1253,7 +1232,7 @@ function AdminProfileModal({
               </div>
             )}
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '8px' }}>
+            <div className="admin-profile-modal-footer" style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '8px' }}>
               <button
                 type="button"
                 onClick={onClose}
@@ -1721,16 +1700,36 @@ export default function Home() {
       </section>
 
       {/* Barra de navegación inferior fija para móviles */}
-      <nav className="mobile-bottom-nav" aria-label="Navegación móvil">
+      <nav
+        className="mobile-bottom-nav"
+        aria-label="Navegación móvil"
+        style={{ gridTemplateColumns: isSuper ? 'repeat(3, 1fr)' : undefined }}
+      >
         {isSuper ? (
-          <button
-            type="button"
-            className="active"
-            onClick={() => setActive('Perfiles')}
-          >
-            <span className="nav-icon">👥</span>
-            <small>Clientes</small>
-          </button>
+          <>
+            <button
+              type="button"
+              className={active === 'Perfiles' ? 'active' : ''}
+              onClick={() => setActive('Perfiles')}
+            >
+              <span className="nav-icon">👥</span>
+              <small>Clientes</small>
+            </button>
+            <button
+              type="button"
+              onClick={() => setProfileModalOpen(true)}
+            >
+              <span className="nav-icon">👤</span>
+              <small>Mi Cuenta</small>
+            </button>
+            <button
+              type="button"
+              onClick={handleLogout}
+            >
+              <span className="nav-icon">🚪</span>
+              <small>Salir</small>
+            </button>
+          </>
         ) : (
           <>
             <button
@@ -5138,7 +5137,7 @@ function AttendanceModule({ demo }: { demo: (message: string) => void }) {
                       }}
                     >
                       {/* Datos del Alumno */}
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: '220px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: '1 1 200px', minWidth: 0 }}>
                         <span style={{
                           width: '38px',
                           height: '38px',

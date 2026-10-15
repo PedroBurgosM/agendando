@@ -423,7 +423,7 @@ ${c.bookingUrl}
       </div>
 
       {/* Tarjetas de Métricas Globales */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', marginBottom: '24px' }}>
+      <div className="profiles-stats-grid">
         <div style={{ background: '#fff', padding: '16px 20px', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.03)' }}>
           <span style={{ fontSize: '12px', fontWeight: 600, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Total Clientes</span>
           <div style={{ fontSize: '28px', fontWeight: 700, color: '#0f172a', marginTop: '6px' }}>{totalClients}</div>
@@ -502,7 +502,7 @@ ${c.bookingUrl}
           </button>
         </div>
 
-        <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flex: 1, justifyContent: 'flex-end', minWidth: '280px' }}>
+        <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flex: 1, justifyContent: 'flex-end', minWidth: 0, width: '100%' }}>
           <input
             type="text"
             value={search}
@@ -565,22 +565,14 @@ ${c.bookingUrl}
             return (
               <div
                 key={item.userId}
+                className="profile-client-card"
                 style={{
                   background: item.isActive ? '#fff' : '#f8fafc',
-                  borderRadius: '12px',
-                  border: item.isActive ? '1px solid #e2e8f0' : '1px solid #e2e8f0',
                   opacity: item.isActive ? 1 : 0.88,
-                  padding: '20px 24px',
-                  boxShadow: '0 1px 3px rgba(0,0,0,0.03)',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  flexWrap: 'wrap',
-                  gap: '16px'
                 }}
               >
                 {/* Columna Izquierda: Información del Cliente */}
-                <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-start', minWidth: '320px', flex: 1 }}>
+                <div className="profile-client-info">
                   <div
                     style={{
                       width: '46px',
@@ -677,7 +669,7 @@ ${c.bookingUrl}
                 </div>
 
                 {/* Columna Central: Métricas */}
-                <div style={{ display: 'flex', gap: '20px', alignItems: 'center', padding: '0 16px' }}>
+                <div className="profile-client-stats-col" style={{ display: 'flex', gap: '20px', alignItems: 'center', padding: '0 16px' }}>
                   <div style={{ textAlign: 'center' }}>
                     <div style={{ fontSize: '16px', fontWeight: 700, color: '#0f172a' }}>{item.stats?.customersCount || 0}</div>
                     <div style={{ fontSize: '11px', color: '#64748b' }}>Alumnos</div>
@@ -693,7 +685,7 @@ ${c.bookingUrl}
                 </div>
 
                 {/* Columna Derecha: Acciones */}
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                <div className="profile-client-actions" style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
                   <button
                     onClick={() => {
                       const origin = typeof window !== 'undefined' ? window.location.origin : '';
@@ -795,7 +787,7 @@ ${c.bookingUrl}
       {/* MODAL: CREAR NUEVO CLIENTE */}
       {/* ======================================================== */}
       {isCreateOpen && (
-        <div style={{
+        <div className="profile-modal-backdrop" style={{
           position: 'fixed',
           inset: 0,
           background: 'rgba(15, 23, 42, 0.65)',
@@ -806,7 +798,7 @@ ${c.bookingUrl}
           zIndex: 1000,
           padding: '20px'
         }}>
-          <div style={{
+          <div className="profile-modal-card" style={{
             background: '#fff',
             borderRadius: '16px',
             width: '100%',
@@ -840,7 +832,7 @@ ${c.bookingUrl}
             )}
 
             <form onSubmit={handleCreateSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+              <div className="profile-modal-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                 <div>
                   <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#334155', marginBottom: '4px' }}>
                     Nombre del Responsable *
@@ -894,7 +886,7 @@ ${c.bookingUrl}
               </div>
 
               <div style={{ borderTop: '1px solid #f1f5f9', paddingTop: '12px' }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div className="profile-modal-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                   <div>
                     <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#334155', marginBottom: '4px' }}>
                       Nombre del Negocio / Academia *
@@ -929,7 +921,7 @@ ${c.bookingUrl}
                 </div>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+              <div className="profile-modal-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                 <div>
                   <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#334155', marginBottom: '4px' }}>
                     Teléfono / WhatsApp
@@ -1011,7 +1003,7 @@ ${c.bookingUrl}
       {/* MODAL: CREDENCIALES CREADAS (LISTAS PARA COMPARTIR) */}
       {/* ======================================================== */}
       {successCredentials && (
-        <div style={{
+        <div className="profile-modal-backdrop" style={{
           position: 'fixed',
           inset: 0,
           background: 'rgba(15, 23, 42, 0.75)',
@@ -1022,7 +1014,7 @@ ${c.bookingUrl}
           zIndex: 1100,
           padding: '20px'
         }}>
-          <div style={{
+          <div className="profile-modal-card" style={{
             background: '#fff',
             borderRadius: '16px',
             width: '100%',
@@ -1107,7 +1099,7 @@ ${c.bookingUrl}
       {/* MODAL: EDITAR CLIENTE / RESETEAR CONTRASEÑA */}
       {/* ======================================================== */}
       {editingProfile && (
-        <div style={{
+        <div className="profile-modal-backdrop" style={{
           position: 'fixed',
           inset: 0,
           background: 'rgba(15, 23, 42, 0.65)',
@@ -1118,7 +1110,7 @@ ${c.bookingUrl}
           zIndex: 1000,
           padding: '20px'
         }}>
-          <div style={{
+          <div className="profile-modal-card" style={{
             background: '#fff',
             borderRadius: '16px',
             width: '100%',
@@ -1190,7 +1182,7 @@ ${c.bookingUrl}
                 />
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+              <div className="profile-modal-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                 <div>
                   <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: '#334155', marginBottom: '4px' }}>
                     Teléfono
@@ -1272,7 +1264,7 @@ ${c.bookingUrl}
       {/* MODAL: CONFIRMAR ELIMINAR */}
       {/* ======================================================== */}
       {deletingProfile && (
-        <div style={{
+        <div className="profile-modal-backdrop" style={{
           position: 'fixed',
           inset: 0,
           background: 'rgba(15, 23, 42, 0.65)',
@@ -1283,7 +1275,7 @@ ${c.bookingUrl}
           zIndex: 1000,
           padding: '20px'
         }}>
-          <div style={{
+          <div className="profile-modal-card" style={{
             background: '#fff',
             borderRadius: '16px',
             width: '100%',

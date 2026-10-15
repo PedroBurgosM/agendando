@@ -390,7 +390,7 @@ export default function BookingPage() {
                   <span style={{ fontSize: '11px', fontWeight: 700, color: '#1e293b', textTransform: 'uppercase', letterSpacing: '0.05em', display: 'block', marginBottom: '6px' }}>
                     O reasigna el día y la hora de tu primera clase:
                   </span>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                  <div className="booking-reschedule-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
                     <div>
                       <label style={{ fontSize: '11px', fontWeight: 600, color: '#475569', display: 'block' }}>
                         Fecha:
