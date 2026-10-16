@@ -1817,6 +1817,7 @@ type AgendaBooking = {
   professional_name: string;
   professional_email?: string;
   professional_phone?: string | null;
+  notes?: string;
 };
 type EnrolledStudent = {
   booking_id: number;
@@ -1829,6 +1830,7 @@ type EnrolledStudent = {
   payment_status: string;
   status: string;
   amount_clp: number;
+  notes?: string;
 };
 
 type CalendarSession = {
@@ -1871,6 +1873,7 @@ function AgendaModule({ demo }: { demo: (message: string) => void }) {
   const [agendaBookingDate, setAgendaBookingDate] = useState<string>('');
   const [agendaBookingTime, setAgendaBookingTime] = useState<string>('18:00');
   const [agendaBookingSlots, setAgendaBookingSlots] = useState<ParsedSlot[]>([]);
+  const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
 
   const weekStart = startOfWeek(focusDate);
   const days = view === 'Semana' ? Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)) : [focusDate];
@@ -1929,7 +1932,8 @@ function AgendaModule({ demo }: { demo: (message: string) => void }) {
         membership_status: b.membership_status,
         payment_status: b.payment_status,
         status: b.status,
-        amount_clp: b.amount_clp
+        amount_clp: b.amount_clp,
+        notes: b.notes
       });
     }
 
@@ -2042,12 +2046,47 @@ function AgendaModule({ demo }: { demo: (message: string) => void }) {
     return { isTaken: false };
   }
 
+  function toggleServiceSelection(sid: string) {
+    setSelectedServiceIds(prev => {
+      const isSelected = prev.includes(sid);
+      const next = isSelected ? prev.filter(x => x !== sid) : [...prev, sid];
+      if (next.length === 1) {
+        const singleSid = next[0];
+        setAgendaBookingServiceId(singleSid);
+        const chosen = agendaServices.find(s => String(s.id) === singleSid);
+        const profId = chosen?.instructor_id
+          ? String(chosen.instructor_id)
+          : (agendaTeam.filter(m => Boolean(m.active))[0]?.id ? String(agendaTeam.filter(m => Boolean(m.active))[0].id) : (agendaTeam[0] ? String(agendaTeam[0].id) : ''));
+        setAgendaBookingProfessionalId(profId);
+        if (chosen?.schedule) {
+          const slots = parseScheduleToSlots(chosen.schedule);
+          setAgendaBookingSlots(slots);
+          const firstAvailable = slots.find(s => !checkSlotTaken(s.date, s.time, chosen, profId).isTaken);
+          const targetSlot = firstAvailable || slots[0];
+          if (targetSlot) {
+            setAgendaBookingDate(targetSlot.date);
+            setAgendaBookingTime(targetSlot.time);
+          }
+        }
+      } else if (next.length === 0) {
+        setAgendaBookingServiceId('');
+      } else {
+        setAgendaBookingServiceId(next[0]);
+      }
+      return next;
+    });
+  }
+
   async function createBooking(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setFormError('');
+    if (selectedServiceIds.length === 0) {
+      setFormError('Debes seleccionar al menos una clase.');
+      return;
+    }
     setSaving(true);
     const form = new FormData(event.currentTarget);
-    const payload = Object.fromEntries(form.entries());
+    const payload: Record<string, any> = Object.fromEntries(form.entries());
     if (selectedStudentId && selectedStudentId !== 'new') {
       const s = agendaStudents.find(stu => String(stu.id) === selectedStudentId);
       if (s) {
@@ -2056,6 +2095,26 @@ function AgendaModule({ demo }: { demo: (message: string) => void }) {
         payload.customerEmail = s.email;
         payload.customerPhone = s.phone || '';
       }
+    }
+
+    if (selectedServiceIds.length > 1) {
+      payload.services = selectedServiceIds.map(sid => {
+        const serv = agendaServices.find(s => String(s.id) === sid);
+        let pId = serv?.instructor_id ? String(serv.instructor_id) : agendaBookingProfessionalId;
+        if (!pId && agendaTeam.length > 0) pId = String(agendaTeam[0].id);
+        return {
+          serviceId: sid,
+          professionalId: pId,
+          date: agendaBookingDate,
+          time: agendaBookingTime
+        };
+      });
+      payload.serviceIds = selectedServiceIds;
+    } else {
+      payload.serviceId = selectedServiceIds[0];
+      payload.professionalId = agendaBookingProfessionalId;
+      payload.date = agendaBookingDate;
+      payload.time = agendaBookingTime;
     }
 
     try {
@@ -2071,6 +2130,7 @@ function AgendaModule({ demo }: { demo: (message: string) => void }) {
       if (/^\d{4}-\d{2}-\d{2}$/.test(date)) setFocusDate(new Date(`${date}T12:00:00`));
       setShowNew(false);
       setSelectedStudentId('');
+      setSelectedServiceIds([]);
       setPrefillSession(null);
       demo(result.message ?? 'Inscripción confirmada.');
     } catch (error) {
@@ -2086,6 +2146,7 @@ function AgendaModule({ demo }: { demo: (message: string) => void }) {
     const p = chileDateParts(new Date(session.starts_at * 1000));
     const dStr = localDateKey(new Date(session.starts_at * 1000));
     const tStr = `${String(p.hour).padStart(2, '0')}:${String(p.minute).padStart(2, '0')}`;
+    setSelectedServiceIds([String(session.service_id)]);
     setAgendaBookingServiceId(String(session.service_id));
     setAgendaBookingProfessionalId(String(session.professional_id));
     setAgendaBookingDate(dStr);
@@ -2236,8 +2297,17 @@ function AgendaModule({ demo }: { demo: (message: string) => void }) {
             onClick={() => {
               setPrefillSession(null);
               setSelectedStudentId('');
-              setAgendaBookingServiceId('');
-              setAgendaBookingProfessionalId('');
+              if (agendaServices.length > 0) {
+                const first = agendaServices[0];
+                setSelectedServiceIds([String(first.id)]);
+                setAgendaBookingServiceId(String(first.id));
+                const profId = first.instructor_id ? String(first.instructor_id) : (agendaTeam[0] ? String(agendaTeam[0].id) : '');
+                setAgendaBookingProfessionalId(profId);
+              } else {
+                setSelectedServiceIds([]);
+                setAgendaBookingServiceId('');
+                setAgendaBookingProfessionalId('');
+              }
               setAgendaBookingDate(localDateKey(focusDate));
               setAgendaBookingTime('10:00');
               setAgendaBookingSlots([]);
@@ -2321,7 +2391,10 @@ function AgendaModule({ demo }: { demo: (message: string) => void }) {
                   const isGroup = session.class_type === 'grupal';
                   const enrolled = session.students.length;
                   const maxCap = session.capacity;
-                  const capLabel = isGroup ? `👥 ${enrolled}/${maxCap} alumnos` : (session.students[0]?.customer_name || 'Individual');
+                  const freeSlots = Math.max(0, maxCap - enrolled);
+                  const capLabel = isGroup
+                    ? `👥 ${enrolled}/${maxCap} (${freeSlots > 0 ? `${freeSlots} disp.` : 'Lleno'})`
+                    : (session.students[0]?.customer_name || 'Individual');
                   const allAttended = enrolled > 0 && session.students.every(s => s.status === 'attended');
                   const hasAbsent = session.students.some(s => s.status === 'absent');
                   const statusIcon = allAttended ? '✓ ' : hasAbsent ? '⚠️ ' : '';
@@ -2519,6 +2592,19 @@ function AgendaModule({ demo }: { demo: (message: string) => void }) {
                               {stu.membership_status === 'active' ? '🟢 Al día' : '🔴 Cuota pendiente'}
                             </span>
                             <small style={{ color: '#64748b', fontSize: '11px' }}>{stu.customer_phone || stu.customer_email || 'Sin WhatsApp'}</small>
+                            {stu.notes && (
+                              <span style={{
+                                fontSize: '10px',
+                                padding: '2px 6px',
+                                borderRadius: '6px',
+                                background: '#f1f5f9',
+                                color: '#334155',
+                                border: '1px solid #cbd5e1',
+                                fontWeight: 600
+                              }}>
+                                📝 {stu.notes}
+                              </span>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -2621,6 +2707,47 @@ function AgendaModule({ demo }: { demo: (message: string) => void }) {
                       </div>
                     </div>
                   ))}
+
+                  {activeSession.class_type === 'grupal' && Array.from({ length: Math.max(0, activeSession.capacity - activeSession.students.length) }).map((_, slotIdx) => (
+                    <div
+                      key={`free-slot-${slotIdx}`}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '10px 14px',
+                        borderRadius: '8px',
+                        border: '1px dashed #cbd5e1',
+                        background: '#ffffff'
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontSize: '11px', background: '#ecfdf5', color: '#047857', border: '1px solid #a7f3d0', fontWeight: 700, padding: '2px 8px', borderRadius: '4px' }}>
+                          Cupo #{activeSession.students.length + slotIdx + 1}
+                        </span>
+                        <strong style={{ fontSize: '13px', color: '#10b981' }}>🟢 DISPONIBLE</strong>
+                      </div>
+                      <button
+                        type="button"
+                        style={{
+                          padding: '5px 12px',
+                          fontSize: '11px',
+                          fontWeight: 600,
+                          borderRadius: '6px',
+                          border: '1px solid #10b981',
+                          background: '#ecfdf5',
+                          color: '#047857',
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '4px'
+                        }}
+                        onClick={() => handleEnrollInSession(activeSession)}
+                      >
+                        <span>＋</span> Asignar Alumno
+                      </button>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
@@ -2705,53 +2832,109 @@ function AgendaModule({ demo }: { demo: (message: string) => void }) {
                 </>
               )}
 
-              <label className="full">Clase / Disciplina
-                <select
-                  name="serviceId"
-                  required
-                  value={agendaBookingServiceId}
-                  onChange={(e) => {
-                    const sid = e.target.value;
-                    setAgendaBookingServiceId(sid);
-                    const chosen = agendaServices.find(s => String(s.id) === sid);
-                    const profId = chosen?.instructor_id
-                      ? String(chosen.instructor_id)
-                      : (agendaTeam.filter(m => Boolean(m.active))[0]?.id ? String(agendaTeam.filter(m => Boolean(m.active))[0].id) : (agendaTeam[0] ? String(agendaTeam[0].id) : ''));
-                    setAgendaBookingProfessionalId(profId);
-                    if (chosen?.schedule) {
-                      const slots = parseScheduleToSlots(chosen.schedule);
-                      setAgendaBookingSlots(slots);
-                      // Seleccionar automáticamente el primer horario que NO esté tomado
-                      const firstAvailable = slots.find(s => !checkSlotTaken(s.date, s.time, chosen, profId).isTaken);
-                      const targetSlot = firstAvailable || slots[0];
-                      if (targetSlot) {
-                        setAgendaBookingDate(targetSlot.date);
-                        setAgendaBookingTime(targetSlot.time);
-                      } else {
-                        setAgendaBookingDate(localDateKey(new Date()));
-                        setAgendaBookingTime('18:00');
-                      }
-                    } else {
-                      setAgendaBookingSlots([]);
-                      setAgendaBookingDate(localDateKey(new Date()));
-                      setAgendaBookingTime('18:00');
-                    }
-                  }}
-                >
-                  <option value="" disabled>Seleccionar clase</option>
-                  {agendaServices.map(s => (
-                    <option value={s.id} key={s.id}>
-                      {s.name} · {s.class_type === 'grupal' ? `👥 Grupal (Cupo max: ${s.capacity || 10})` : '👤 Individual'} {s.instructor_name ? `· 👤 ${s.instructor_name}` : ''} {s.schedule ? `· 🕒 ${s.schedule}` : ''} · ${Number(s.price_clp).toLocaleString('es-CL')}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <div className="full" style={{ marginBottom: '4px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                  <label style={{ margin: 0, fontWeight: 700, fontSize: '13px', color: '#1e293b' }}>
+                    Clase(s) a inscribir (puedes seleccionar una o varias):
+                  </label>
+                  <span style={{ fontSize: '12px', color: selectedServiceIds.length > 1 ? '#1d4ed8' : '#64748b', fontWeight: 600 }}>
+                    {selectedServiceIds.length} {selectedServiceIds.length === 1 ? 'clase seleccionada' : 'clases seleccionadas'}
+                  </span>
+                </div>
+
+                <div style={{ display: 'grid', gap: '6px', maxHeight: '210px', overflowY: 'auto', padding: '6px', border: '1px solid #cbd5e1', borderRadius: '10px', background: '#ffffff' }}>
+                  {agendaServices.length === 0 ? (
+                    <p style={{ margin: '10px', fontSize: '12px', color: '#64748b', textAlign: 'center' }}>No hay clases activas disponibles.</p>
+                  ) : (
+                    agendaServices.map(s => {
+                      const isSelected = selectedServiceIds.includes(String(s.id));
+                      return (
+                        <div
+                          key={s.id}
+                          onClick={() => toggleServiceSelection(String(s.id))}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '10px',
+                            padding: '8px 12px',
+                            borderRadius: '8px',
+                            border: isSelected ? '2px solid #18181b' : '1px solid #e2e8f0',
+                            background: isSelected ? '#f8fafc' : '#ffffff',
+                            cursor: 'pointer',
+                            transition: 'all 0.15s ease',
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => {}}
+                            style={{ width: '18px', height: '18px', cursor: 'pointer', accentColor: '#18181b', margin: 0 }}
+                          />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '6px' }}>
+                              <strong style={{ fontSize: '13px', color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                {s.name}
+                              </strong>
+                              <span style={{ fontSize: '12px', fontWeight: 700, color: '#16a34a', flexShrink: 0 }}>
+                                ${Number(s.price_clp).toLocaleString('es-CL')}
+                              </span>
+                            </div>
+                            <div style={{ fontSize: '11px', color: '#64748b', marginTop: '2px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                              <span>{s.class_type === 'grupal' ? `👥 Grupal (Cap: ${s.capacity || 10})` : '👤 Individual'}</span>
+                              {s.instructor_name && <span>• 👤 {s.instructor_name}</span>}
+                              {s.schedule && <span>• 🕒 {s.schedule}</span>}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
 
               <input type="hidden" name="professionalId" value={agendaBookingProfessionalId} />
               <input type="hidden" name="date" value={agendaBookingDate} />
               <input type="hidden" name="time" value={agendaBookingTime} />
 
-              {agendaBookingServiceId && (() => {
+              {selectedServiceIds.length > 1 && (
+                <div className="full" style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '10px', padding: '12px 14px', marginBottom: '8px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                    <strong style={{ fontSize: '13px', color: '#166534', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      ✓ {selectedServiceIds.length} clases se asignarán simultáneamente:
+                    </strong>
+                    <span style={{ fontSize: '12px', fontWeight: 700, color: '#15803d' }}>
+                      Total: ${selectedServiceIds.reduce((sum, sid) => {
+                        const s = agendaServices.find(srv => String(srv.id) === sid);
+                        return sum + (Number(s?.price_clp) || 0);
+                      }, 0).toLocaleString('es-CL')}
+                    </span>
+                  </div>
+                  <div style={{ display: 'grid', gap: '6px' }}>
+                    {selectedServiceIds.map(sid => {
+                      const s = agendaServices.find(srv => String(srv.id) === sid);
+                      if (!s) return null;
+                      return (
+                        <div key={sid} style={{ background: '#ffffff', border: '1px solid #bbf7d0', borderRadius: '6px', padding: '6px 10px', fontSize: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <div>
+                            <strong>{s.name}</strong>
+                            <span style={{ color: '#64748b', marginLeft: '6px' }}>
+                              {s.schedule ? `(🕒 ${s.schedule})` : '(Horario a convenir)'}
+                            </span>
+                          </div>
+                          <span style={{ color: '#15803d', fontWeight: 600 }}>
+                            👤 {s.instructor_name || 'Instructor asignado'}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <small style={{ color: '#166534', fontSize: '11px', display: 'block', marginTop: '6px' }}>
+                    💡 Cada clase se programará con su respectivo horario e instructor asignado de forma automática.
+                  </small>
+                </div>
+              )}
+
+              {selectedServiceIds.length === 1 && agendaBookingServiceId && (() => {
                 const chosen = agendaServices.find(s => String(s.id) === String(agendaBookingServiceId));
                 const instructor = agendaTeam.find(m => String(m.id) === String(agendaBookingProfessionalId));
                 const instructorName = instructor?.name || chosen?.instructor_name || 'Instructor asignado';
@@ -2961,12 +3144,12 @@ function AgendaModule({ demo }: { demo: (message: string) => void }) {
                 type="submit"
                 disabled={
                   saving ||
+                  selectedServiceIds.length === 0 ||
                   agendaServices.length === 0 ||
-                  agendaTeam.length === 0 ||
-                  Boolean(agendaBookingServiceId && checkSlotTaken(agendaBookingDate, agendaBookingTime, agendaServices.find(s => String(s.id) === String(agendaBookingServiceId)), agendaBookingProfessionalId).isTaken)
+                  (selectedServiceIds.length === 1 && Boolean(agendaBookingServiceId && checkSlotTaken(agendaBookingDate, agendaBookingTime, agendaServices.find(s => String(s.id) === String(agendaBookingServiceId)), agendaBookingProfessionalId).isTaken))
                 }
               >
-                {saving ? 'Guardando…' : 'Confirmar Cupo'}
+                {saving ? 'Guardando…' : selectedServiceIds.length > 1 ? `Confirmar Cupos (${selectedServiceIds.length} Clases)` : 'Confirmar Cupo'}
               </button>
             </div>
           </form>
@@ -3015,6 +3198,7 @@ function BookingsModule({ demo }: { demo: (message: string) => void }) {
 
   const [showNew, setShowNew] = useState(false);
   const [selectedStudentId, setSelectedStudentId] = useState('');
+  const [selectedServiceIds, setSelectedServiceIds] = useState<string[]>([]);
   const [bookingServiceId, setBookingServiceId] = useState('');
   const [bookingProfessionalId, setBookingProfessionalId] = useState('');
   const [bookingDate, setBookingDate] = useState('');
@@ -3320,23 +3504,84 @@ function BookingsModule({ demo }: { demo: (message: string) => void }) {
     return { isTaken: false };
   }
 
+  function toggleServiceSelection(sid: string) {
+    setSelectedServiceIds(prev => {
+      const isSelected = prev.includes(sid);
+      const next = isSelected ? prev.filter(x => x !== sid) : [...prev, sid];
+      if (next.length === 1) {
+        const singleSid = next[0];
+        setBookingServiceId(singleSid);
+        const chosen = services.find(s => String(s.id) === singleSid);
+        const profId = chosen?.instructor_id
+          ? String(chosen.instructor_id)
+          : (team.filter(m => Boolean(m.active))[0]?.id ? String(team.filter(m => Boolean(m.active))[0].id) : (team[0] ? String(team[0].id) : ''));
+        setBookingProfessionalId(profId);
+        if (chosen?.schedule) {
+          const slots = parseScheduleToSlots(chosen.schedule);
+          setBookingSlots(slots);
+          const firstAvailable = slots.find(s => !checkBookingSlotTaken(s.date, s.time, chosen, profId).isTaken);
+          const targetSlot = firstAvailable || slots[0];
+          if (targetSlot) {
+            setBookingDate(targetSlot.date);
+            setBookingTime(targetSlot.time);
+          }
+        }
+      } else if (next.length === 0) {
+        setBookingServiceId('');
+      } else {
+        setBookingServiceId(next[0]);
+      }
+      return next;
+    });
+  }
+
   async function createBooking(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setSaving(true);
     setFormError('');
+    if (selectedServiceIds.length === 0) {
+      setFormError('Debes seleccionar al menos una clase.');
+      return;
+    }
+    setSaving(true);
     const form = new FormData(e.currentTarget);
-    const payload = Object.fromEntries(form.entries());
+    const payload: Record<string, any> = Object.fromEntries(form.entries());
     if (selectedStudentId && selectedStudentId !== 'new') {
-      payload.customerId = selectedStudentId;
+      const s = students.find(stu => String(stu.id) === selectedStudentId);
+      if (s) {
+        payload.customerId = String(s.id);
+        payload.customerName = s.name;
+        payload.customerEmail = s.email;
+        payload.customerPhone = s.phone || '';
+      }
     }
 
-    const bookingDateStr = String(payload.date || bookingDate);
-    const bookingTimeStr = String(payload.time || bookingTime);
-    const targetDt = parseChileDateTime(bookingDateStr, bookingTimeStr);
-    if (!Number.isNaN(targetDt.getTime()) && targetDt.getTime() < Date.now() - 5 * 60 * 1000) {
-      setFormError('No se puede agendar una clase en una fecha u hora pasada.');
-      setSaving(false);
-      return;
+    if (selectedServiceIds.length > 1) {
+      payload.services = selectedServiceIds.map(sid => {
+        const serv = services.find(s => String(s.id) === sid);
+        let pId = serv?.instructor_id ? String(serv.instructor_id) : bookingProfessionalId;
+        if (!pId && team.length > 0) pId = String(team[0].id);
+        return {
+          serviceId: sid,
+          professionalId: pId,
+          date: bookingDate,
+          time: bookingTime
+        };
+      });
+      payload.serviceIds = selectedServiceIds;
+    } else {
+      payload.serviceId = selectedServiceIds[0];
+      payload.professionalId = bookingProfessionalId;
+      payload.date = bookingDate;
+      payload.time = bookingTime;
+
+      const bookingDateStr = String(payload.date || bookingDate);
+      const bookingTimeStr = String(payload.time || bookingTime);
+      const targetDt = parseChileDateTime(bookingDateStr, bookingTimeStr);
+      if (!Number.isNaN(targetDt.getTime()) && targetDt.getTime() < Date.now() - 5 * 60 * 1000) {
+        setFormError('No se puede agendar una clase en una fecha u hora pasada.');
+        setSaving(false);
+        return;
+      }
     }
 
     try {
@@ -3350,6 +3595,7 @@ function BookingsModule({ demo }: { demo: (message: string) => void }) {
       await loadData();
       setShowNew(false);
       setSelectedStudentId('');
+      setSelectedServiceIds([]);
       demo(data.message ?? 'Inscripción confirmada.');
     } catch (err) {
       setFormError(err instanceof Error ? err.message : 'Error al registrar la reserva.');
@@ -3381,11 +3627,27 @@ function BookingsModule({ demo }: { demo: (message: string) => void }) {
             setShowNew(true);
             setFormError('');
             setSelectedStudentId('');
-            setBookingServiceId('');
-            setBookingProfessionalId('');
-            setBookingDate(todayKey);
-            setBookingTime('18:00');
-            setBookingSlots([]);
+            const activeServices = services.filter(s => Boolean(s.active));
+            const initialService = activeServices[0];
+            const initialSid = initialService ? String(initialService.id) : '';
+            setSelectedServiceIds(initialSid ? [initialSid] : []);
+            setBookingServiceId(initialSid);
+            const profId = initialService?.instructor_id
+              ? String(initialService.instructor_id)
+              : (team.filter(m => Boolean(m.active))[0]?.id ? String(team.filter(m => Boolean(m.active))[0].id) : (team[0] ? String(team[0].id) : ''));
+            setBookingProfessionalId(profId);
+            if (initialService?.schedule) {
+              const slots = parseScheduleToSlots(initialService.schedule);
+              setBookingSlots(slots);
+              const firstAvailable = slots.find(s => !checkBookingSlotTaken(s.date, s.time, initialService, profId).isTaken);
+              const targetSlot = firstAvailable || slots[0];
+              setBookingDate(targetSlot?.date || todayKey);
+              setBookingTime(targetSlot?.time || '18:00');
+            } else {
+              setBookingSlots([]);
+              setBookingDate(todayKey);
+              setBookingTime('18:00');
+            }
           }}
         >
           <span>＋</span> Nueva Reserva / Inscribir Alumno
@@ -3734,51 +3996,109 @@ function BookingsModule({ demo }: { demo: (message: string) => void }) {
                 </>
               )}
 
-              <label className="full">Clase / Disciplina
-                <select
-                  name="serviceId"
-                  required
-                  value={bookingServiceId}
-                  onChange={(e) => {
-                    const sid = e.target.value;
-                    setBookingServiceId(sid);
-                    const chosen = services.find(s => String(s.id) === sid);
-                    const profId = chosen?.instructor_id
-                      ? String(chosen.instructor_id)
-                      : (team.filter(m => Boolean(m.active))[0]?.id ? String(team.filter(m => Boolean(m.active))[0].id) : (team[0] ? String(team[0].id) : ''));
-                    setBookingProfessionalId(profId);
-                    if (chosen?.schedule) {
-                      const slots = parseScheduleToSlots(chosen.schedule);
-                      setBookingSlots(slots);
-                      if (slots.length > 0) {
-                        const availableSlot = slots.find(s => !checkBookingSlotTaken(s.date, s.time, chosen, profId).isTaken) || slots[0];
-                        setBookingDate(availableSlot.date);
-                        setBookingTime(availableSlot.time);
-                      } else {
-                        setBookingDate(todayKey);
-                        setBookingTime('18:00');
-                      }
-                    } else {
-                      setBookingSlots([]);
-                      setBookingDate(todayKey);
-                      setBookingTime('18:00');
-                    }
-                  }}
-                >
-                  <option value="" disabled>Seleccionar clase</option>
-                  {services.filter(s => Boolean(s.active)).map((s) => (
-                    <option value={s.id} key={s.id}>
-                      {s.name} · {s.class_type === 'grupal' ? `👥 Grupal (Cupo max: ${s.capacity || 10})` : '👤 Individual'} {s.instructor_name ? `· 👤 ${s.instructor_name}` : ''} {s.schedule ? `· 🕒 ${s.schedule}` : ''} · ${Number(s.price_clp).toLocaleString('es-CL')}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <div className="full" style={{ marginBottom: '4px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                  <label style={{ margin: 0, fontWeight: 700, fontSize: '13px', color: '#1e293b' }}>
+                    Clase(s) a inscribir (puedes seleccionar una o varias):
+                  </label>
+                  <span style={{ fontSize: '12px', color: selectedServiceIds.length > 1 ? '#1d4ed8' : '#64748b', fontWeight: 600 }}>
+                    {selectedServiceIds.length} {selectedServiceIds.length === 1 ? 'clase seleccionada' : 'clases seleccionadas'}
+                  </span>
+                </div>
+
+                <div style={{ display: 'grid', gap: '6px', maxHeight: '210px', overflowY: 'auto', padding: '6px', border: '1px solid #cbd5e1', borderRadius: '10px', background: '#ffffff' }}>
+                  {services.filter(s => Boolean(s.active)).length === 0 ? (
+                    <p style={{ margin: '10px', fontSize: '12px', color: '#64748b', textAlign: 'center' }}>No hay clases activas disponibles.</p>
+                  ) : (
+                    services.filter(s => Boolean(s.active)).map(s => {
+                      const isSelected = selectedServiceIds.includes(String(s.id));
+                      return (
+                        <div
+                          key={s.id}
+                          onClick={() => toggleServiceSelection(String(s.id))}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '10px',
+                            padding: '8px 12px',
+                            borderRadius: '8px',
+                            border: isSelected ? '2px solid #18181b' : '1px solid #e2e8f0',
+                            background: isSelected ? '#f8fafc' : '#ffffff',
+                            cursor: 'pointer',
+                            transition: 'all 0.15s ease',
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => {}}
+                            style={{ width: '18px', height: '18px', cursor: 'pointer', accentColor: '#18181b', margin: 0 }}
+                          />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '6px' }}>
+                              <strong style={{ fontSize: '13px', color: '#0f172a', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                {s.name}
+                              </strong>
+                              <span style={{ fontSize: '12px', fontWeight: 700, color: '#16a34a', flexShrink: 0 }}>
+                                ${Number(s.price_clp).toLocaleString('es-CL')}
+                              </span>
+                            </div>
+                            <div style={{ fontSize: '11px', color: '#64748b', marginTop: '2px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                              <span>{s.class_type === 'grupal' ? `👥 Grupal (Cap: ${s.capacity || 10})` : '👤 Individual'}</span>
+                              {s.instructor_name && <span>• 👤 {s.instructor_name}</span>}
+                              {s.schedule && <span>• 🕒 {s.schedule}</span>}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
 
               <input type="hidden" name="professionalId" value={bookingProfessionalId} />
               <input type="hidden" name="date" value={bookingDate} />
               <input type="hidden" name="time" value={bookingTime} />
 
-              {bookingServiceId && (() => {
+              {selectedServiceIds.length > 1 && (
+                <div className="full" style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: '10px', padding: '12px 14px', marginBottom: '8px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                    <strong style={{ fontSize: '13px', color: '#166534', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      ✓ {selectedServiceIds.length} clases se asignarán simultáneamente:
+                    </strong>
+                    <span style={{ fontSize: '12px', fontWeight: 700, color: '#15803d' }}>
+                      Total: ${selectedServiceIds.reduce((sum, sid) => {
+                        const s = services.find(srv => String(srv.id) === sid);
+                        return sum + (Number(s?.price_clp) || 0);
+                      }, 0).toLocaleString('es-CL')}
+                    </span>
+                  </div>
+                  <div style={{ display: 'grid', gap: '6px' }}>
+                    {selectedServiceIds.map(sid => {
+                      const s = services.find(srv => String(srv.id) === sid);
+                      if (!s) return null;
+                      return (
+                        <div key={sid} style={{ background: '#ffffff', border: '1px solid #bbf7d0', borderRadius: '6px', padding: '6px 10px', fontSize: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <div>
+                            <strong>{s.name}</strong>
+                            <span style={{ color: '#64748b', marginLeft: '6px' }}>
+                              {s.schedule ? `(🕒 ${s.schedule})` : '(Horario a convenir)'}
+                            </span>
+                          </div>
+                          <span style={{ color: '#15803d', fontWeight: 600 }}>
+                            👤 {s.instructor_name || 'Instructor asignado'}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <small style={{ color: '#166534', fontSize: '11px', display: 'block', marginTop: '6px' }}>
+                    💡 Cada clase se programará con su respectivo horario e instructor asignado de forma automática.
+                  </small>
+                </div>
+              )}
+
+              {selectedServiceIds.length === 1 && bookingServiceId && (() => {
                 const chosen = services.find(s => String(s.id) === String(bookingServiceId));
                 const instructor = team.find(m => String(m.id) === String(bookingProfessionalId));
                 const instructorName = instructor?.name || chosen?.instructor_name || 'Instructor asignado';
@@ -3988,12 +4308,12 @@ function BookingsModule({ demo }: { demo: (message: string) => void }) {
                 type="submit"
                 disabled={
                   saving ||
+                  selectedServiceIds.length === 0 ||
                   services.length === 0 ||
-                  team.length === 0 ||
-                  Boolean(bookingServiceId && checkBookingSlotTaken(bookingDate, bookingTime, services.find(s => String(s.id) === String(bookingServiceId)), bookingProfessionalId).isTaken)
+                  (selectedServiceIds.length === 1 && Boolean(bookingServiceId && checkBookingSlotTaken(bookingDate, bookingTime, services.find(s => String(s.id) === String(bookingServiceId)), bookingProfessionalId).isTaken))
                 }
               >
-                {saving ? 'Guardando…' : 'Confirmar Cupo'}
+                {saving ? 'Guardando…' : selectedServiceIds.length > 1 ? `Confirmar Cupos (${selectedServiceIds.length} Clases)` : 'Confirmar Cupo'}
               </button>
             </div>
           </form>
